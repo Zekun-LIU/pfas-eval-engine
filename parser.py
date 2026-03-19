@@ -102,10 +102,21 @@ _PFAS_ABBREV_PATTERN = re.compile(
 def _looks_like_pfas(text: str) -> bool:
     """Quick check: does this string look like a PFAS analyte name?"""
     upper = text.strip().upper()
+    if not upper or upper in ("NAN", "NONE", ""):
+        return False
+    # Exact key/alias match
     if upper in _ALL_PFAS_KEYS_UPPER:
         return True
-    # Regex-based check
-    return bool(_PFAS_ABBREV_PATTERN.search(text))
+    # Regex-based abbreviation match (e.g. "PFOA (ng/L)", "PFOS result")
+    if bool(_PFAS_ABBREV_PATTERN.search(text)):
+        return True
+    # Substring match for full PFAS chemical names not covered by exact alias
+    # (e.g. "Perfluoropentane sulfonic acid", "Fluorotelomer carboxylate")
+    _CHEM_INDICATORS = (
+        "PERFLUORO", "POLYFLUORO", "FLUOROTELOMER",
+        "HFPO", "FTOH", "PFESA", "TRIFLUOROACET",
+    )
+    return any(ind in upper for ind in _CHEM_INDICATORS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -119,8 +130,8 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     Expected layout (flexible detection):
       - Column 0:  PFAS analyte names
       - Column 1+: Sample concentrations (one column per sample)
-      - Row 0 (optional): Sample name headers
-      - Unit is detected from column headers or nearby cells
+      - Metadata / header rows at top are automatically skipped
+      - Unit is detected from the column header row or top rows
 
     Returns a ParsedData instance.
     """
@@ -142,22 +153,12 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
         result.warnings.append("[Excel] File is empty.")
         return result
 
-    # ── Step 1: Scan top rows for unit ──────────────────────────────────────
-    unit = "ng/L"
-    for ri in range(min(8, len(df_raw))):
-        row_text = " ".join(str(v) for v in df_raw.iloc[ri] if pd.notna(v))
-        detected = detect_unit_from_text(row_text)
-        if detected:
-            unit = detected
-            logs.append(f"[Excel] Unit '{unit}' detected from row {ri + 1}")
-            break
-    result.detected_unit = unit
-
-    # ── Step 2: Locate the PFAS data region ─────────────────────────────────
+    # ── Step 1: Locate the PFAS data region (scan ALL rows) ──────────────────
+    # Must come BEFORE unit detection so we know which row is the column header.
     data_start_row = None
     header_row_idx = None
 
-    for ri in range(min(20, len(df_raw))):
+    for ri in range(len(df_raw)):
         cell_val = str(df_raw.iloc[ri, 0]).strip()
         norm = normalize_pfas_name(cell_val)
         if norm in PFAS_SPECIES_DB or _looks_like_pfas(cell_val):
@@ -177,6 +178,24 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
             "[Excel] Could not auto-detect PFAS data region. "
             "Assuming row 1 = header, data from row 2."
         )
+
+    # ── Step 2: Detect concentration unit ────────────────────────────────────
+    # Scan: first 8 rows + the column header row (which usually carries the unit label)
+    unit = "ng/L"
+    rows_to_scan_for_unit = list(range(min(8, len(df_raw))))
+    if header_row_idx is not None and header_row_idx >= 0:
+        if header_row_idx not in rows_to_scan_for_unit:
+            rows_to_scan_for_unit.append(header_row_idx)
+
+    for ri in rows_to_scan_for_unit:
+        row_text = " ".join(str(v) for v in df_raw.iloc[ri] if pd.notna(v))
+        detected = detect_unit_from_text(row_text)
+        if detected:
+            unit = detected
+            logs.append(f"[Excel] Unit '{unit}' detected from row {ri + 1}")
+            break
+
+    result.detected_unit = unit
 
     # ── Step 3: Extract sample names ────────────────────────────────────────
     n_cols = len(df_raw.columns)
@@ -201,9 +220,11 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
         row = df_raw.iloc[ri]
         analyte_raw = str(row.iloc[0]).strip()
 
-        # Skip empty, total, or non-PFAS rows
-        if not analyte_raw or analyte_raw.lower() in ("nan", "none", "total", "sum pfas",
-                                                        "total pfas", "pfas sum", ""):
+        # Skip empty, total-sum, or non-PFAS rows
+        if not analyte_raw or analyte_raw.lower() in (
+            "nan", "none", "total", "sum pfas", "total pfas", "pfas sum",
+            "sum", "total pfas (calculated)", "",
+        ):
             skipped_rows += 1
             continue
 

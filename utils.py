@@ -172,6 +172,75 @@ PFAS_ALIASES: Dict[str, str] = {
     "4:2 FLUOROTELOMER SULFONATE":             "4:2 FTS",
     "6:2 FLUOROTELOMER SULFONATE":             "6:2 FTS",
     "8:2 FLUOROTELOMER SULFONATE":             "8:2 FTS",
+    "4:2 FLUOROTELOMER SULPHONATE":            "4:2 FTS",   # UK spelling
+    "6:2 FLUOROTELOMER SULPHONATE":            "6:2 FTS",
+    "8:2 FLUOROTELOMER SULPHONATE":            "8:2 FTS",
+    "4:2 FLUOROTELOMER SULFONIC ACID":         "4:2 FTSA",
+    "6:2 FLUOROTELOMER SULFONIC ACID":         "6:2 FTSA",
+    "8:2 FLUOROTELOMER SULFONIC ACID":         "8:2 FTSA",
+    "10:2 FLUOROTELOMER SULFONIC ACID":        "8:2 FTSA",  # map to nearest
+    "6:2 FLUOROTELOMER SULPHONIC ACID":        "6:2 FTSA",  # UK
+    "8:2 FLUOROTELOMER SULPHONIC ACID":        "8:2 FTSA",
+
+    # UK sulphonate/sulphonic spelling for common PFAS
+    "PERFLUOROOCTANE SULPHONIC ACID":          "PFOS",
+    "PERFLUOROOCTANESULPHONIC ACID":           "PFOS",
+    "PERFLUOROHEXANE SULPHONIC ACID":          "PFHxS",
+    "PERFLUOROHEXANESULPHONIC ACID":           "PFHxS",
+    "PERFLUOROBUTANE SULPHONIC ACID":          "PFBS",
+    "PERFLUOROPENTANE SULPHONIC ACID":         "PFPeS",
+    "PERFLUOROHEPTANE SULPHONIC ACID":         "PFHpS",
+    "PERFLUORODECANE SULPHONIC ACID":          "PFDS",
+
+    # Carboxylate (-ate) form variants
+    "PERFLUOROOCTANOATE":                      "PFOA",
+    "PERFLUORONONANOATE":                      "PFNA",
+    "PERFLUORODECANOATE":                      "PFDA",
+    "PERFLUOROUNDECANOATE":                    "PFUnDA",
+    "PERFLUORODODECANOATE":                    "PFDoDA",
+    "PERFLUOROBUTANOATE":                      "PFBA",
+    "PERFLUOROPENTANOATE":                     "PFPeA",
+    "PERFLUOROHEXANOATE":                      "PFHxA",
+    "PERFLUOROHEPTANOATE":                     "PFHpA",
+
+    # Sulfonate (-ate) form variants
+    "PERFLUOROOCTANESULFONATE":                "PFOS",
+    "PERFLUOROHEXANESULFONATE":                "PFHxS",
+    "PERFLUOROBUTANESULFONATE":                "PFBS",
+    "PERFLUOROPENTANESULFONATE":               "PFPeS",
+    "PERFLUORODECANESULFONATE":                "PFDS",
+
+    # Alternate carboxylate spellings sometimes used in EU/UK lab reports
+    "PERFLUOROPROPIONIC ACID":                 "PFPrA",
+    "PERFLUOROPROPANOATE":                     "PFPrA",
+    "PERFLUOROTRIDECANOATE":                   "PFTrDA",
+    "PERFLUOROTETRADECANOATE":                 "PFTeDA",
+
+    # PFOSA / precursor variants
+    "PERFLUOROOCTYLSULFONAMIDE":               "PFOSA",
+    "PERFLUOROOCTYLSULPHONAMIDE":              "PFOSA",
+    "N-METHYL PERFLUOROOCTYLSULFONAMIDE":      "N-MeFOSA",
+    "N-ETHYL PERFLUOROOCTYLSULFONAMIDE":       "N-EtFOSA",
+
+    # HFPO-DA / GenX alternate labels
+    "HEXAFLUOROPROPYLENE OXIDE DIMER ACID":    "HFPO-DA",
+    "HFPO DIMER ACID":                         "HFPO-DA",
+    "AMMONIUM PFOA REPLACEMENT":               "HFPO-DA",
+
+    # CAS numbers for remaining key species
+    "335-67-1":   "PFOA",
+    "1763-23-1":  "PFOS",
+    "355-46-4":   "PFHxS",
+    "375-22-4":   "PFBA",
+    "2706-90-3":  "PFPeA",
+    "307-24-4":   "PFHxA",
+    "375-85-9":   "PFHpA",
+    "375-95-1":   "PFNA",
+    "335-76-2":   "PFDA",
+    "2058-94-8":  "PFUnDA",
+    "307-55-1":   "PFDoDA",
+    "375-73-5":   "PFBS",
+    "3871-99-6":  "PFHxS",
 }
 
 # Species that must NEVER be reclassified as 2+2 PFESA (spec explicit exclude list)
@@ -218,7 +287,15 @@ def detect_unit_from_text(text: str) -> Optional[str]:
 def normalize_pfas_name(raw: str) -> str:
     """
     Map a raw analyte string to its canonical PFAS abbreviation.
-    Falls through: direct match → alias match → partial match → return as-is.
+
+    Resolution order:
+      1. Direct key match (exact abbreviation, case-insensitive)
+      2. Alias lookup (full names, CAS numbers, formula strings)
+      3. Alias lookup after stripping parenthetical suffixes
+         e.g. "Perfluorooctanoic acid (PFOA)" → try "PERFLUOROOCTANOIC ACID"
+      4. Partial key-in-name scan (abbreviation embedded in longer string)
+      5. Return raw value unchanged (unknown species)
+
     Respects the PFESA exclude list (F-53B is never mapped to 2+2 PFESA).
     """
     if not raw:
@@ -232,15 +309,27 @@ def normalize_pfas_name(raw: str) -> str:
     if upper in PFAS_SPECIES_DB:
         return upper
 
-    # 2. Alias lookup (includes CAS numbers and formulas)
+    # 2. Full alias lookup (includes CAS numbers and formulas)
     if upper in PFAS_ALIASES:
         result = PFAS_ALIASES[upper]
-        # Enforce exclusion: F-53B cannot resolve to 2+2 PFESA
         if result == "2+2 PFESA" and upper in {e.upper() for e in PFESA_2PLUS2_EXCLUDES}:
             return "F-53B"
         return result
 
-    # 3. Partial key-in-name (only for keys ≥ 4 chars to avoid false positives)
+    # 3. Strip parenthetical content and retry alias lookup
+    #    e.g. "Perfluorooctanoic acid (PFOA)" → "Perfluorooctanoic acid"
+    stripped = re.sub(r"\s*\(.*?\)\s*$", "", s).strip()
+    if stripped and stripped != s:
+        upper_stripped = stripped.upper()
+        if upper_stripped in PFAS_SPECIES_DB:
+            return upper_stripped
+        if upper_stripped in PFAS_ALIASES:
+            result = PFAS_ALIASES[upper_stripped]
+            if result == "2+2 PFESA" and upper_stripped in {e.upper() for e in PFESA_2PLUS2_EXCLUDES}:
+                return "F-53B"
+            return result
+
+    # 4. Partial key-in-name (only for keys ≥ 4 chars to avoid false positives)
     for key in sorted(PFAS_SPECIES_DB.keys(), key=len, reverse=True):
         if len(key) >= 4 and (key in s or key.upper() in upper):
             return key
