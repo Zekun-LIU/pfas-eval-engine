@@ -36,6 +36,10 @@ class ParsedData:
     # Core PFAS concentration data: {sample_name: {analyte_canonical: conc_mg_L}}
     pfas_samples: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
+    # Analytes that were recognized as PFAS but had only ND / non-detect values.
+    # {sample_name: [canonical_name, ...]}
+    nd_species: Dict[str, List[str]] = field(default_factory=dict)
+
     # Original unit detected in the data source
     detected_unit: str = "ng/L"
 
@@ -66,6 +70,12 @@ class ParsedData:
                 self.pfas_samples[sample].update(data)
             else:
                 self.pfas_samples[sample] = dict(data)
+        for sample, nd_list in other.nd_species.items():
+            if sample not in self.nd_species:
+                self.nd_species[sample] = []
+            for sp in nd_list:
+                if sp not in self.nd_species[sample]:
+                    self.nd_species[sample].append(sp)
         self.matrix_params.update(other.matrix_params)
         self.keyword_species += [k for k in other.keyword_species if k not in self.keyword_species]
         self.logs += other.logs
@@ -132,6 +142,7 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
       - Column 1+: Sample concentrations (one column per sample)
       - Metadata / header rows at top are automatically skipped
       - Unit is detected from the column header row or top rows
+      - Tries ALL sheets; uses the sheet with the most PFAS data
 
     Returns a ParsedData instance.
     """
@@ -139,24 +150,77 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     result.has_excel = True
     logs = result.logs
 
-    try:
-        if filename.lower().endswith(".csv"):
+    # ── Load all sheets ───────────────────────────────────────────────────────
+    if filename.lower().endswith(".csv"):
+        try:
             df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
-        else:
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None, dtype=str, sheet_name=0)
-        logs.append(f"[Excel] '{filename}' → {len(df_raw)} rows × {len(df_raw.columns)} columns")
-    except Exception as e:
-        result.errors.append(f"[Excel] Failed to open file: {e}")
+            sheets = {"Sheet1": df_raw}
+        except Exception as e:
+            result.errors.append(f"[Excel] Failed to open CSV: {e}")
+            return result
+    else:
+        try:
+            sheets = pd.read_excel(
+                io.BytesIO(file_bytes), header=None, dtype=str, sheet_name=None
+            )
+        except Exception as e:
+            result.errors.append(f"[Excel] Failed to open file: {e}")
+            return result
+
+    logs.append(f"[Excel] '{filename}' — sheets: {list(sheets.keys())}")
+
+    # ── Try each sheet; keep the one with the most PFAS data ─────────────────
+    best_result: Optional[ParsedData] = None
+    best_score = -1
+
+    for sheet_name, df_raw in sheets.items():
+        if df_raw is None or df_raw.empty or len(df_raw.columns) < 2:
+            logs.append(f"[Excel] Sheet '{sheet_name}': skipped (empty or <2 columns)")
+            continue
+
+        logs.append(
+            f"[Excel] Sheet '{sheet_name}': {len(df_raw)} rows × {len(df_raw.columns)} columns"
+        )
+        sheet_result = _parse_excel_sheet(df_raw, sheet_name, filename, logs)
+
+        # Score: detected concentrations + ND species
+        score = sum(len(v) for v in sheet_result.pfas_samples.values()) + sum(
+            len(v) for v in sheet_result.nd_species.values()
+        )
+        if score > best_score:
+            best_score = score
+            best_result = sheet_result
+
+    if best_result is None:
+        result.warnings.append("[Excel] All sheets were empty or had fewer than 2 columns.")
         return result
 
-    if df_raw.empty:
-        result.warnings.append("[Excel] File is empty.")
-        return result
+    # Merge best sheet result into main result
+    result.pfas_samples = best_result.pfas_samples
+    result.nd_species = best_result.nd_species
+    result.detected_unit = best_result.detected_unit
+    result.warnings += best_result.warnings
+    return result
+
+
+def _parse_excel_sheet(
+    df_raw: "pd.DataFrame",
+    sheet_name: str,
+    filename: str,
+    logs: List[str],
+) -> ParsedData:
+    """Parse a single Excel sheet DataFrame. Returns a ParsedData."""
+    result = ParsedData()
 
     # ── Step 1: Locate the PFAS data region (scan ALL rows) ──────────────────
-    # Must come BEFORE unit detection so we know which row is the column header.
     data_start_row = None
     header_row_idx = None
+
+    # Log column A contents for first 30 rows to aid debugging
+    col_a_preview = []
+    for ri in range(min(30, len(df_raw))):
+        col_a_preview.append(f"  row{ri+1}: {str(df_raw.iloc[ri, 0]).strip()!r}")
+    logs.append(f"[Excel] Sheet '{sheet_name}' — Col A preview:\n" + "\n".join(col_a_preview))
 
     for ri in range(len(df_raw)):
         cell_val = str(df_raw.iloc[ri, 0]).strip()
@@ -165,8 +229,9 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
             data_start_row = ri
             header_row_idx = ri - 1 if ri > 0 else None
             logs.append(
-                f"[Excel] PFAS data region: rows {ri + 1}+ | "
-                f"header row: {header_row_idx + 1 if header_row_idx is not None else 'N/A'}"
+                f"[Excel] Sheet '{sheet_name}': PFAS data region row {ri + 1}+ | "
+                f"header row: {header_row_idx + 1 if header_row_idx is not None else 'N/A'} | "
+                f"first analyte: {cell_val!r} → {norm!r}"
             )
             break
 
@@ -175,24 +240,30 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
         header_row_idx = 0
         data_start_row = 1
         result.warnings.append(
-            "[Excel] Could not auto-detect PFAS data region. "
-            "Assuming row 1 = header, data from row 2."
+            f"[Excel] Sheet '{sheet_name}': Could not auto-detect PFAS data region. "
+            "No recognized PFAS analyte names found in column A. "
+            "Assuming row 1 = header, data from row 2. "
+            "Check the Col A preview above in the debug log."
         )
 
     # ── Step 2: Detect concentration unit ────────────────────────────────────
-    # Scan: first 8 rows + the column header row (which usually carries the unit label)
     unit = "ng/L"
     rows_to_scan_for_unit = list(range(min(8, len(df_raw))))
     if header_row_idx is not None and header_row_idx >= 0:
         if header_row_idx not in rows_to_scan_for_unit:
             rows_to_scan_for_unit.append(header_row_idx)
+    # Also scan the first data row
+    if data_start_row not in rows_to_scan_for_unit:
+        rows_to_scan_for_unit.append(data_start_row)
 
     for ri in rows_to_scan_for_unit:
-        row_text = " ".join(str(v) for v in df_raw.iloc[ri] if pd.notna(v))
+        if ri >= len(df_raw):
+            continue
+        row_text = " ".join(str(v) for v in df_raw.iloc[ri] if str(v) not in ("nan", "None"))
         detected = detect_unit_from_text(row_text)
         if detected:
             unit = detected
-            logs.append(f"[Excel] Unit '{unit}' detected from row {ri + 1}")
+            logs.append(f"[Excel] Sheet '{sheet_name}': unit '{unit}' detected from row {ri + 1}")
             break
 
     result.detected_unit = unit
@@ -202,35 +273,59 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
 
     if header_row_idx is not None and header_row_idx >= 0:
         header_cells = [str(df_raw.iloc[header_row_idx, c]).strip() for c in range(1, n_cols)]
-        sample_names = [
-            h if h not in ("nan", "None", "") else f"Sample_{i + 1}"
-            for i, h in enumerate(header_cells)
-        ]
+        sample_names = []
+        for i, h in enumerate(header_cells):
+            if h and h.lower() not in ("nan", "none", ""):
+                # Strip unit suffixes from header cells: "Sample A (ng/L)" → "Sample A"
+                clean = re.sub(r"\s*[\(\[]\s*(?:ng|µg|ug|mg)/[lL].*?[\)\]]", "", h).strip()
+                clean = re.sub(r"\s*[\(\[]\s*(?:ppt|ppb|ppm).*?[\)\]]", "", clean).strip()
+                sample_names.append(clean if clean else f"Sample_{i + 1}")
+            else:
+                sample_names.append(f"Sample_{i + 1}")
     else:
         sample_names = [f"Sample_{i + 1}" for i in range(n_cols - 1)]
 
-    logs.append(f"[Excel] Sample columns detected: {sample_names}")
+    logs.append(f"[Excel] Sheet '{sheet_name}': sample columns {sample_names}")
 
     # ── Step 4: Parse concentration rows ────────────────────────────────────
     pfas_data: Dict[str, Dict[str, float]] = {s: {} for s in sample_names}
+    nd_data: Dict[str, List[str]] = {s: [] for s in sample_names}
     parsed_rows = 0
-    skipped_rows = 0
+    nd_rows = 0
+
+    # Skip patterns for metadata rows (only relevant in fallback mode)
+    _META_SKIP = re.compile(
+        r"^(issue|report|date|client|lab|sample\s*id|collected|received|analysed|"
+        r"analyzed|method|version|project|address|phone|email|test|certified|"
+        r"accredited|unit|parameter|cas\s*(number|no|#)?|analysis|result|"
+        r"detection|quantitation|limit|mdl|rl|mrl|comment|note|page)\b",
+        re.IGNORECASE,
+    )
 
     for ri in range(data_start_row, len(df_raw)):
         row = df_raw.iloc[ri]
         analyte_raw = str(row.iloc[0]).strip()
 
-        # Skip empty, total-sum, or non-PFAS rows
-        if not analyte_raw or analyte_raw.lower() in (
-            "nan", "none", "total", "sum pfas", "total pfas", "pfas sum",
-            "sum", "total pfas (calculated)", "",
+        # Skip empty rows
+        if not analyte_raw or analyte_raw.lower() in ("nan", "none", ""):
+            continue
+
+        # Skip known total/sum rows
+        if analyte_raw.lower() in (
+            "total", "sum pfas", "total pfas", "pfas sum",
+            "sum", "total pfas (calculated)", "σ pfas",
         ):
-            skipped_rows += 1
+            continue
+
+        # In fallback mode, skip rows that are clearly metadata (not PFAS analytes)
+        if data_start_row == 1 and _META_SKIP.match(analyte_raw):
+            logs.append(f"[Excel] Row {ri + 1}: skipping metadata row: {analyte_raw!r}")
             continue
 
         analyte = normalize_pfas_name(analyte_raw)
 
-        row_had_data = False
+        row_had_numeric = False
+        row_had_nd = False
         for ci, sample_name in enumerate(sample_names):
             raw_val = row.iloc[ci + 1] if (ci + 1) < len(row) else None
             val = parse_numeric_value(raw_val)
@@ -238,29 +333,43 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
                 val_mg_L = convert_to_mg_L(val, unit)
                 if val_mg_L is not None:
                     pfas_data[sample_name][analyte] = val_mg_L
-                    row_had_data = True
+                    row_had_numeric = True
                 else:
                     result.warnings.append(
-                        f"[Excel] Row {ri + 1}: unit '{unit}' conversion failed for value '{val}'"
+                        f"[Excel] Row {ri + 1}: unit '{unit}' conversion failed for '{val}'"
                     )
+            else:
+                # Check if this is a ND / non-detect marker (not just empty)
+                raw_str = str(raw_val).strip().lower() if raw_val is not None else ""
+                if raw_str and raw_str not in ("nan", "none", ""):
+                    row_had_nd = True
 
-        if row_had_data:
+        if row_had_numeric:
             parsed_rows += 1
+        elif row_had_nd:
+            # Analyte was analyzed but all results were non-detect
+            nd_rows += 1
+            for sample_name in sample_names:
+                if analyte not in nd_data[sample_name]:
+                    nd_data[sample_name].append(analyte)
 
     # Remove empty samples
     pfas_data = {k: v for k, v in pfas_data.items() if v}
+    nd_data = {k: v for k, v in nd_data.items() if v}
     result.pfas_samples = pfas_data
+    result.nd_species = nd_data
 
     logs.append(
-        f"[Excel] Parsed {parsed_rows} analyte rows → "
-        f"{len(pfas_data)} non-empty sample(s) | "
+        f"[Excel] Sheet '{sheet_name}': {parsed_rows} detected rows | "
+        f"{nd_rows} non-detect rows | "
+        f"{len(pfas_data)} sample(s) | "
         f"{sum(len(v) for v in pfas_data.values())} data points"
     )
 
-    if not pfas_data:
+    if not pfas_data and not nd_data:
         result.warnings.append(
-            "[Excel] No PFAS concentration data extracted. "
-            "Check that column A contains analyte names and remaining columns contain numeric values."
+            f"[Excel] Sheet '{sheet_name}': No PFAS data extracted. "
+            "If analyte names use an unsupported format, check the Col A debug preview above."
         )
 
     return result

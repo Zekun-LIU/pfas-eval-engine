@@ -149,7 +149,11 @@ def _render_flag(flag) -> None:
     )
 
 
-def _render_sample_section(sr: SampleResult, expanded: bool = True) -> None:
+def _render_sample_section(
+    sr: SampleResult,
+    expanded: bool = True,
+    nd_species: "List[str] | None" = None,
+) -> None:
     """Render Module 1 + 2 results for a single sample."""
     import pandas as pd
 
@@ -234,7 +238,29 @@ def _render_sample_section(sr: SampleResult, expanded: bool = True) -> None:
                                 value=format_pct(frac * 100),
                             )
         else:
-            st.warning("No concentration data for this sample.")
+            if nd_species:
+                st.warning(
+                    f"All {len(nd_species)} analyte(s) in this sample are **below the detection limit (ND)**. "
+                    "No concentrations were quantified — values shown as ND/non-detect in the source file."
+                )
+                nd_rows = [
+                    {
+                        "Analyte": name,
+                        "Full Name": __import__("utils").get_pfas_info(name).get("full_name", name),
+                        "Category": CATEGORY_LABELS.get(
+                            __import__("utils").get_pfas_info(name).get("category", "unknown"), "Unclassified"
+                        ),
+                        "Result": "< MDL (ND)",
+                    }
+                    for name in nd_species
+                ]
+                st.dataframe(pd.DataFrame(nd_rows), use_container_width=True, hide_index=True)
+                st.caption(
+                    "ND species are excluded from totals per spec policy (do_not_assume_zero = true). "
+                    "No treatment flag can be raised without a quantified concentration."
+                )
+            else:
+                st.warning("No concentration data for this sample.")
 
         for f in m1.flags:
             _render_flag(f)
@@ -415,7 +441,7 @@ def _build_text_report(result: EvaluationResult) -> str:
     return "\n".join(lines)
 
 
-def _render_technical_output(result: EvaluationResult) -> None:
+def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | None" = None) -> None:
     """Render the full structured technical report."""
     # ── Overall Status Banner ─────────────────────────────────────────────────
     st.markdown('<div class="section-header">Overall Evaluation Status</div>',
@@ -455,8 +481,13 @@ def _render_technical_output(result: EvaluationResult) -> None:
 
     # ── Per-Sample Sections ───────────────────────────────────────────────────
     n_samples = len(result.samples)
+    nd_lookup = parsed.nd_species if parsed else {}
     for i, sr in enumerate(result.samples):
-        _render_sample_section(sr, expanded=(n_samples == 1 or i == 0))
+        _render_sample_section(
+            sr,
+            expanded=(n_samples == 1 or i == 0),
+            nd_species=nd_lookup.get(sr.sample_name),
+        )
 
     # ── Module 3: Water Matrix ────────────────────────────────────────────────
     _render_module3(result.module3)
@@ -537,6 +568,11 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
                 pd.DataFrame([{"Parameter": k, "Value": v} for k, v in parsed.matrix_params.items()]),
                 hide_index=True,
             )
+
+        if parsed.nd_species:
+            st.markdown("**Non-Detect (ND) Species — Analyzed but Below Detection Limit:**")
+            for sample, nd_list in parsed.nd_species.items():
+                st.info(f"Sample '{sample}': {', '.join(nd_list)}")
 
         if parsed.keyword_species:
             st.markdown("**Keyword Species Detected (from text, no concentration):**")
@@ -701,7 +737,7 @@ with right_col:
                 unsafe_allow_html=True,
             )
         else:
-            _render_technical_output(result)
+            _render_technical_output(result, st.session_state.parsed_data)
 
     # ── Tab 2: Email Draft ────────────────────────────────────────────────────
     with tab_email:
