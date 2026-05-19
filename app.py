@@ -44,69 +44,154 @@ from utils import (
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+    /* ── Page chrome ──────────────────────────────────────────── */
+    .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1400px; }
+    section[data-testid="stSidebar"] { display: none; }
+
+    /* ── Header ───────────────────────────────────────────────── */
     .pfas-header {
-        background: linear-gradient(135deg, #1a2942, #2c4066);
+        background: #0F172A;
+        border-bottom: 2px solid #38BDF8;
         color: white;
-        padding: 20px 28px 16px 28px;
-        border-radius: 10px;
-        margin-bottom: 18px;
+        padding: 22px 32px 18px 32px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        position: relative;
+        overflow: hidden;
     }
-    .pfas-header h1 { margin: 0; font-size: 1.75rem; font-weight: 700; color: white; }
-    .pfas-header .subtitle { font-size: 0.95rem; color: #aab8cc; margin-top: 4px; }
-    .pfas-header .byline { font-size: 0.78rem; color: #7a9bbf; margin-top: 2px; }
+    .pfas-header::before {
+        content: '';
+        position: absolute; top: 0; right: 0;
+        width: 300px; height: 100%;
+        background: radial-gradient(ellipse at top right, rgba(56,189,248,0.12), transparent 70%);
+        pointer-events: none;
+    }
+    .pfas-header h1 {
+        margin: 0; font-size: 1.55rem; font-weight: 700;
+        color: white; letter-spacing: -0.3px;
+    }
+    .pfas-header .subtitle {
+        font-size: 0.88rem; color: #94A3B8; margin-top: 5px; font-weight: 400;
+    }
+    .pfas-header .byline {
+        font-size: 0.75rem; color: #475569; margin-top: 3px; font-weight: 400;
+    }
+    .pfas-header .accent-tag {
+        display: inline-block; background: rgba(56,189,248,0.15);
+        color: #38BDF8; border: 1px solid rgba(56,189,248,0.3);
+        border-radius: 4px; font-size: 0.7rem; font-weight: 600;
+        padding: 2px 8px; letter-spacing: 0.5px; margin-top: 8px;
+    }
 
+    /* ── Section headers ──────────────────────────────────────── */
     .section-header {
-        border-left: 4px solid #2980b9;
-        padding: 4px 0 4px 10px;
-        font-weight: 600; font-size: 1.05rem; color: #1a2942;
-        margin: 16px 0 8px 0;
+        font-size: 0.72rem; font-weight: 700; letter-spacing: 1.2px;
+        text-transform: uppercase; color: #38BDF8;
+        margin: 20px 0 10px 0; padding-bottom: 6px;
+        border-bottom: 1px solid rgba(56,189,248,0.2);
     }
 
+    /* ── Flag rows ────────────────────────────────────────────── */
     .flag-row {
-        padding: 8px 12px; border-radius: 5px;
-        margin-bottom: 6px; font-size: 0.88rem; line-height: 1.5;
+        padding: 10px 14px; border-radius: 8px;
+        margin-bottom: 8px; font-size: 0.85rem; line-height: 1.55;
+        color: #1E293B !important;
     }
-    .flag-critical        { background: #fde8e8; border-left: 4px solid #C0392B; }
-    .flag-warning         { background: #fff8e3; border-left: 4px solid #D4AC0D; }
-    .flag-info            { background: #e8f4fd; border-left: 4px solid #2980b9; }
-    .flag-ok              { background: #eafbea; border-left: 4px solid #1E8449; }
-    /* Spec M2 classification types */
-    .flag-commercial      { background: #f5eefb; border-left: 4px solid #6C3483; }
-    .flag-technical       { background: #fef5ec; border-left: 4px solid #BA4A00; }
-    .flag-pathway         { background: #e8f8f5; border-left: 4px solid #117A65; }
-    .flag-special_handling{ background: #f2f3f4; border-left: 4px solid #5D6D7E; }
-    .flag-detail          { font-size: 0.82rem; color: #555; margin-top: 4px; font-style: italic; }
-    /* Variability banner */
+    .flag-critical        { background: #FEF2F2; border-left: 3px solid #EF4444; }
+    .flag-warning         { background: #FFFBEB; border-left: 3px solid #F59E0B; }
+    .flag-info            { background: #EFF6FF; border-left: 3px solid #3B82F6; }
+    .flag-ok              { background: #F0FDF4; border-left: 3px solid #22C55E; }
+    .flag-commercial      { background: #FAF5FF; border-left: 3px solid #A855F7; }
+    .flag-technical       { background: #FFF7ED; border-left: 3px solid #F97316; }
+    .flag-pathway         { background: #F0FDFA; border-left: 3px solid #14B8A6; }
+    .flag-special_handling{ background: #F8FAFC; border-left: 3px solid #64748B; }
+    .flag-row strong      { color: #0F172A !important; }
+    .flag-detail          { font-size: 0.80rem; color: #475569 !important; margin-top: 5px; font-style: italic; }
+
+    /* ── Variability banner ───────────────────────────────────── */
     .variability-banner {
-        background: #fff8e3; border: 1px solid #D4AC0D; border-radius: 6px;
-        padding: 8px 14px; font-size: 0.88rem; margin: 6px 0;
+        background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px;
+        padding: 10px 16px; font-size: 0.85rem; color: #92400E !important; margin: 8px 0;
     }
 
+    /* ── Metric cards ─────────────────────────────────────────── */
     .metric-card {
-        background: #f7f9fc; border: 1px solid #dde3ee;
-        border-radius: 8px; padding: 12px 16px; text-align: center;
+        background: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 10px; padding: 14px 16px; text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
-    .metric-card .val { font-size: 1.35rem; font-weight: 700; color: #1a2942; }
-    .metric-card .lbl { font-size: 0.75rem; color: #666; margin-top: 2px; }
+    .metric-card .val {
+        font-size: 1.4rem; font-weight: 700; color: #F1F5F9;
+        letter-spacing: -0.5px;
+    }
+    .metric-card .lbl {
+        font-size: 0.70rem; color: #64748B; margin-top: 4px;
+        text-transform: uppercase; letter-spacing: 0.5px;
+    }
 
+    /* ── Email box ────────────────────────────────────────────── */
     .email-box {
-        background: #f7f9fc; border: 1px solid #dde3ee; border-radius: 8px;
-        padding: 18px 20px; font-family: 'Courier New', monospace;
-        font-size: 0.85rem; white-space: pre-wrap; line-height: 1.6;
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 22px 26px;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.84rem;
+        white-space: pre-wrap;
+        line-height: 1.75;
+        color: #1E293B !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
 
-    .pfas-footer {
-        text-align: center; font-size: 0.72rem; color: #aaa;
-        margin-top: 30px; padding-top: 10px; border-top: 1px solid #eee;
+    /* ── Input panel ──────────────────────────────────────────── */
+    .input-card {
+        background: #1E293B; border: 1px solid #334155;
+        border-radius: 10px; padding: 16px 18px; margin-bottom: 12px;
+    }
+    .input-label {
+        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.8px;
+        text-transform: uppercase; color: #94A3B8; margin-bottom: 8px;
     }
 
+    /* ── Run button ───────────────────────────────────────────── */
     div[data-testid="stButton"] > button {
-        width: 100%; background-color: #2c4066; color: white;
-        font-weight: 600; font-size: 1.0rem; padding: 10px;
-        border-radius: 6px; border: none;
+        width: 100%;
+        background: linear-gradient(135deg, #0EA5E9, #6366F1);
+        color: white !important; font-weight: 600; font-size: 0.95rem;
+        padding: 12px; border-radius: 8px; border: none;
+        letter-spacing: 0.3px; box-shadow: 0 4px 12px rgba(14,165,233,0.3);
+        transition: all 0.2s ease;
     }
-    div[data-testid="stButton"] > button:hover { background-color: #1a2942; }
-    .block-container { padding-top: 1rem; }
+    div[data-testid="stButton"] > button:hover {
+        box-shadow: 0 6px 18px rgba(14,165,233,0.45);
+        transform: translateY(-1px);
+    }
+
+    /* ── Source indicator pills ───────────────────────────────── */
+    .src-pill {
+        display: inline-block; border-radius: 20px;
+        padding: 3px 10px; font-size: 0.72rem; font-weight: 600;
+        margin-right: 4px; letter-spacing: 0.3px;
+    }
+    .src-on  { background: rgba(34,197,94,0.15); color: #22C55E; border: 1px solid rgba(34,197,94,0.3); }
+    .src-off { background: rgba(100,116,139,0.1); color: #475569; border: 1px solid rgba(100,116,139,0.2); }
+
+    /* ── Footer ───────────────────────────────────────────────── */
+    .pfas-footer {
+        text-align: center; font-size: 0.70rem; color: #475569;
+        margin-top: 40px; padding-top: 14px;
+        border-top: 1px solid #1E293B;
+        letter-spacing: 0.3px;
+    }
+
+    /* ── Streamlit tab overrides ──────────────────────────────── */
+    button[data-baseweb="tab"] { font-size: 0.85rem !important; font-weight: 500 !important; }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -600,9 +685,10 @@ with header_left:
     st.markdown(
         """
         <div class="pfas-header">
-            <h1>⚗ PFAS Material Evaluation Engine</h1>
-            <div class="subtitle">Claros R&amp;D Team &nbsp;|&nbsp; Preliminary Treatment Feasibility Screening</div>
-            <div class="byline">Developed within Claros R&amp;D &nbsp;|&nbsp; Lead Framework by Zack Liu &nbsp;|&nbsp; v1.0</div>
+            <h1>PFAS Material Evaluation Engine</h1>
+            <div class="subtitle">Claros R&amp;D &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
+            <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
+            <div class="accent-tag">SPEC-ALIGNED v1.0</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -674,14 +760,16 @@ with left_col:
     run_clicked = st.button("▶  Run Evaluation", type="primary")
 
     # Input status indicators
-    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-    ind1, ind2, ind3 = st.columns(3)
-    with ind1:
-        st.markdown(f"{'🟢' if excel_file else '⚪'} Excel")
-    with ind2:
-        st.markdown(f"{'🟢' if pdf_file else '⚪'} PDF")
-    with ind3:
-        st.markdown(f"{'🟢' if (email_text.strip() or goals_text.strip()) else '⚪'} Text")
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    xl_cls  = "src-on" if excel_file else "src-off"
+    pdf_cls = "src-on" if pdf_file else "src-off"
+    txt_cls = "src-on" if (email_text.strip() or goals_text.strip()) else "src-off"
+    st.markdown(
+        f'<span class="src-pill {xl_cls}">Excel</span>'
+        f'<span class="src-pill {pdf_cls}">PDF</span>'
+        f'<span class="src-pill {txt_cls}">Text</span>',
+        unsafe_allow_html=True,
+    )
 
     if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
         st.info(
