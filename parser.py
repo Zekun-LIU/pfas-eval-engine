@@ -399,11 +399,13 @@ def _parse_excel_sheet(
 # MATRIX PARAMETER EXTRACTION FROM EXCEL
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Keywords for matching water-quality parameter names in Excel column A.
+# Keywords for matching water-quality parameter names found in Excel cells.
+# Supports two layouts:
+#   ROW layout  – parameter names in column A, one row per parameter
+#   COLUMN layout – parameter names in a header row, one column per parameter
+#                   (common in French/EU lab reports, e.g. Saint-Rivalain)
 # Keys = canonical param names used by the engine.
-# Values = lowercase strings to match against (exact or starts-with match).
-# Bare metal symbols (Fe, Cu, Mn…) are intentionally omitted to avoid
-# false positives; use full names or "X total" forms instead.
+# Bare metal symbols (Fe, Cu…) are omitted to avoid false positives.
 _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
     "COD": [
         "cod", "chemical oxygen demand", "dco",
@@ -414,6 +416,8 @@ _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
     "DOC": ["doc", "dissolved organic carbon", "carbone organique dissous"],
     "TKN": [
         "tkn", "total kjeldahl nitrogen", "kjeldahl nitrogen",
+        # "Nitrogen Kjeldahl" column header used in French reports
+        "nitrogen kjeldahl",
         "ntk", "azote kjeldahl", "azote total kjeldahl",
     ],
     "ammonia": [
@@ -423,61 +427,114 @@ _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
     ],
     "nitrate": ["no3", "nitrate", "nitrates", "no3-n", "azote nitrate", "azote no3"],
     "nitrite": ["no2", "nitrite", "nitrites", "no2-n"],
-    "TN":  ["total nitrogen", "azote total", "azote global"],
-    "TP":  ["total phosphorus", "phosphore total"],
+    "TN":      ["total nitrogen", "azote total", "azote global"],
+    "TP":      ["total phosphorus", "phosphore total"],
     "phosphate": ["po4", "phosphate", "phosphates"],
     "sulfate":   ["so4", "sulfate", "sulphate", "sulfates"],
     "chloride":  ["chloride", "chlorides", "chlorure", "chlorures"],
     "fluoride":  ["fluoride", "fluorides", "fluorure", "fluorures"],
-    "pH":        ["ph"],
+    "pH": ["ph"],
     "conductivity": [
         "conductivity", "conductivite", "conductivité",
         "electrical conductivity", "specific conductance", "conductance",
+        # "Dissolved salts" column in French reports = conductivity (mS/cm)
+        "dissolved salts", "sels dissous",
     ],
     "turbidity": ["turbidity", "turbidite", "turbidité"],
     "hardness":  ["hardness", "total hardness", "durete", "dureté", "th"],
-    "TDS":       ["tds", "total dissolved solids"],
+    "TDS":       ["tds", "total dissolved solids", "dissolved solids"],
     "TSS": [
         "tss", "total suspended solids",
         "matieres en suspension", "matières en suspension", "mes",
         "suspended solids",
+        # "Solids" alone used in some reports as TSS shorthand
+        "solids",
     ],
     "alkalinity": ["alkalinity", "total alkalinity", "alcalinite", "alcalinité", "tac"],
     "UV254":      ["uv254", "uv-254", "uv 254", "uv@254", "uv abs 254"],
     "temperature": ["temperature", "température"],
-    # Metals — full English/French names + "X total" / "total X" patterns only
-    "iron": [
-        "iron", "total iron", "iron total",
-        "fer", "fer total", "total fer",
-    ],
-    "manganese": [
-        "manganese", "total manganese", "manganese total",
-        "manganèse", "manganèse total",
-    ],
-    "copper":  ["copper", "total copper", "copper total", "cuivre", "cuivre total"],
-    "zinc":    ["zinc", "total zinc", "zinc total"],
-    "aluminum": [
-        "aluminum", "aluminium", "total aluminum", "total aluminium",
-        "aluminium total", "aluminum total",
-    ],
-    "nickel":   ["nickel", "total nickel", "nickel total"],
-    "chromium": [
-        "chromium", "total chromium", "chromium total",
-        "chrome", "chrome total", "chromium vi", "chromium iii",
-    ],
-    "lead":    ["lead", "total lead", "lead total", "plomb", "plomb total"],
-    "arsenic": ["arsenic", "total arsenic", "arsenic total"],
-    "mercury": ["mercury", "mercure", "mercury total"],
-    "cadmium": ["cadmium", "total cadmium", "cadmium total"],
-    "barium":  ["barium", "baryum"],
-    "calcium": ["calcium", "calcium total"],
+    # Metals — full names + "total X" / "X total" only (no bare symbols)
+    "iron":      ["iron", "total iron", "iron total", "fer", "fer total", "total fer"],
+    "manganese": ["manganese", "total manganese", "manganese total",
+                  "manganèse", "manganèse total"],
+    "copper":    ["copper", "total copper", "copper total", "cuivre", "cuivre total"],
+    "zinc":      ["zinc", "total zinc", "zinc total"],
+    "aluminum":  ["aluminum", "aluminium", "total aluminum", "total aluminium",
+                  "aluminium total", "aluminum total"],
+    "nickel":    ["nickel", "total nickel", "nickel total"],
+    "chromium":  ["chromium", "total chromium", "chromium total",
+                  "chrome", "chrome total", "total chrome",
+                  "chromium vi", "chromium iii"],
+    "lead":      ["lead", "total lead", "lead total", "plomb", "plomb total"],
+    "arsenic":   ["arsenic", "total arsenic", "arsenic total"],
+    "mercury":   ["mercury", "mercure", "mercury total"],
+    "cadmium":   ["cadmium", "total cadmium", "cadmium total"],
+    "barium":    ["barium", "baryum"],
+    "calcium":   ["calcium", "calcium total"],
     "magnesium": ["magnesium", "magnésium", "magnesium total"],
 }
 
-# Parameters stored in their native unit (not converted to mg/L)
+# Parameters that stay in their native unit (not converted to mg/L)
 _MATRIX_NATIVE_UNIT_PARAMS: frozenset = frozenset({
     "pH", "temperature", "conductivity", "turbidity", "UV254", "UVT254", "flow_rate",
 })
+
+# Strings that mark a cell as containing a sum parameter, not a real analyte
+# (same set used for PFAS, shared here for matrix skip logic)
+_SUM_PARAM_LOWER = frozenset({
+    "aof", "aox", "eof", "top", "top assay",
+    "sum parameter", "sum parameters",
+})
+
+
+def _keyword_match(cell_lower: str) -> Optional[str]:
+    """
+    Return the canonical parameter name if cell_lower matches any keyword,
+    otherwise None.  cell_lower should already be stripped + lowercased.
+    """
+    cell_clean = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", cell_lower).strip()
+    cell_clean = cell_clean.rstrip(",;: ")
+    for param, keywords in _MATRIX_EXCEL_KEYWORDS.items():
+        for kw in keywords:
+            if cell_clean == kw:
+                return param
+            if cell_lower.startswith(kw) and (
+                len(cell_lower) == len(kw) or not cell_lower[len(kw)].isalpha()
+            ):
+                return param
+    return None
+
+
+def _parse_unit_from_cell(cell_val: str, default: str = "mg/L") -> str:
+    """Extract unit from a parenthetical suffix like 'COD (mg/L)' or 'Fe (µg/L)'."""
+    m = re.search(
+        r"[\(\[<]\s*"
+        r"((?:ng|µg|μg|ug|mg|g)/[lL]|ppm|ppb|ppt"
+        r"|NTU|ntu|[µuμ]S/cm|mS/cm|°C|%)\s*"
+        r"[\)\]>]",
+        cell_val, re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else default
+
+
+def _store_param(
+    params: Dict[str, float],
+    param: str,
+    val: float,
+    unit: str,
+    label: str,
+    logs: List[str],
+) -> None:
+    """Convert value to canonical unit and store in params dict."""
+    if param in _MATRIX_NATIVE_UNIT_PARAMS or not unit:
+        params[param] = val
+        logs.append(f"[Excel Matrix] {label}: {param} = {val} (native)")
+    else:
+        mg_l = convert_to_mg_L(val, unit)
+        if mg_l is None:
+            mg_l = val  # unknown unit — assume already mg/L
+        params[param] = mg_l
+        logs.append(f"[Excel Matrix] {label}: {param} = {mg_l} mg/L  (raw {val} {unit})")
 
 
 def _extract_matrix_from_excel(
@@ -485,17 +542,14 @@ def _extract_matrix_from_excel(
     logs: List[str],
 ) -> Dict[str, float]:
     """
-    Scan all sheets for water matrix parameters.
-    Returns {canonical_param: value} with values in mg/L for concentrations
-    and native units for dimensionless / non-mass parameters.
-    First sheet that yields a given parameter wins; duplicates are ignored.
+    Scan every sheet for water matrix parameters using both layout detectors.
+    First sheet to yield a given parameter wins.
     """
     combined: Dict[str, float] = {}
     for sheet_name, df in sheets.items():
         if df is None or df.empty:
             continue
-        params = _extract_matrix_params_from_sheet(df, sheet_name, logs)
-        for k, v in params.items():
+        for k, v in _extract_matrix_params_from_sheet(df, sheet_name, logs).items():
             if k not in combined:
                 combined[k] = v
     return combined
@@ -507,29 +561,45 @@ def _extract_matrix_params_from_sheet(
     logs: List[str],
 ) -> Dict[str, float]:
     """
-    Scan one sheet for rows whose column-A value matches a known water-quality
-    parameter keyword, then extract a numeric value from the same row.
-
-    Layout handled:
-      - Column 0: parameter name (may include unit in parentheses)
-      - Optional "Unit" column: identified by header keyword
-      - Optional "Average"/"Mean" column: preferred over the first numeric column
-      - Remaining numeric columns: first non-unit numeric used as fallback
+    Try both layout strategies on a single sheet and merge results.
     """
     params: Dict[str, float] = {}
     if df.empty or len(df.columns) < 2:
         return params
 
-    # ── Detect header row: find unit column and preferred value column ─────────
-    _UNIT_HDR  = {"unit", "units", "unité", "unites", "unités", "unite", "uom"}
+    # Row layout: parameter name in column A, value(s) in columns B+
+    for k, v in _extract_row_layout_matrix(df, sheet_name, logs).items():
+        params[k] = v
+
+    # Column layout: parameter names in a header row, values in rows below
+    for k, v in _extract_column_layout_matrix(df, sheet_name, logs).items():
+        if k not in params:
+            params[k] = v
+
+    return params
+
+
+def _extract_row_layout_matrix(
+    df: "pd.DataFrame",
+    sheet_name: str,
+    logs: List[str],
+) -> Dict[str, float]:
+    """
+    Row layout: column A contains parameter names; values are in columns B+.
+    Optional dedicated "Unit" column and "Average"/"Mean" preferred column.
+    """
+    params: Dict[str, float] = {}
+
+    # Find unit column and preferred value column from the first few rows
+    _UNIT_HDR = {"unit", "units", "unité", "unites", "unités", "unite", "uom"}
     _VALUE_HDR = {
-        "average", "avg", "mean", "typical", "typ", "value", "valeur",
+        "average", "avg", "mean", "typical", "value", "valeur",
         "moyenne", "résultat", "resultat", "concentration",
     }
     unit_col_idx: Optional[int] = None
     value_col_idx: Optional[int] = None
 
-    for ri in range(min(5, len(df))):
+    for ri in range(min(6, len(df))):
         for ci in range(len(df.columns)):
             cell = str(df.iloc[ri, ci]).strip().lower()
             if cell in _UNIT_HDR and unit_col_idx is None:
@@ -537,70 +607,29 @@ def _extract_matrix_params_from_sheet(
             if cell in _VALUE_HDR and value_col_idx is None and ci > 0:
                 value_col_idx = ci
 
-    if unit_col_idx is not None:
-        logs.append(f"[Excel Matrix] '{sheet_name}': unit col = {unit_col_idx + 1}")
-    if value_col_idx is not None:
-        logs.append(f"[Excel Matrix] '{sheet_name}': preferred value col = {value_col_idx + 1}")
-
-    # ── Row scan ──────────────────────────────────────────────────────────────
     for ri in range(len(df)):
         cell_val = str(df.iloc[ri, 0]).strip()
         if not cell_val or cell_val.lower() in ("nan", "none", ""):
             continue
-
-        # Normalise cell: lowercase, strip parenthetical suffixes
-        cell_lower = cell_val.lower()
-        cell_clean = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", cell_lower).strip()
-        cell_clean = cell_clean.rstrip(",;: ")
-
-        # Match against keyword list
-        matched_param: Optional[str] = None
-        for param, keywords in _MATRIX_EXCEL_KEYWORDS.items():
-            for kw in keywords:
-                if cell_clean == kw:
-                    matched_param = param
-                    break
-                # Starts-with match (e.g. "COD (mg/L)" starts with "cod")
-                if cell_lower.startswith(kw) and (
-                    len(cell_lower) == len(kw)
-                    or not cell_lower[len(kw)].isalpha()
-                ):
-                    matched_param = param
-                    break
-            if matched_param:
-                break
-
-        if not matched_param or matched_param in params:
+        if cell_val.lower().strip() in _SUM_PARAM_LOWER:
             continue
 
-        # ── Determine unit ────────────────────────────────────────────────────
-        unit = "" if matched_param in _MATRIX_NATIVE_UNIT_PARAMS else "mg/L"
+        matched = _keyword_match(cell_val.lower())
+        if not matched or matched in params:
+            continue
 
-        # Unit embedded in parameter cell: "COD (mg/L)" or "Fe (µg/L)"
-        m_unit = re.search(
-            r"[\(\[<]\s*"
-            r"((?:ng|µg|μg|ug|mg|g)/[lL]|ppm|ppb|ppt"
-            r"|NTU|ntu|µS/cm|uS/cm|mS/cm|°C|%)\s*"
-            r"[\)\]>]",
-            cell_val, re.IGNORECASE,
-        )
-        if m_unit:
-            unit = m_unit.group(1).strip()
-
-        # Dedicated unit column overrides cell-embedded unit
+        # Unit: from cell parenthesis, then dedicated column
+        unit = "" if matched in _MATRIX_NATIVE_UNIT_PARAMS else "mg/L"
+        unit = _parse_unit_from_cell(cell_val, unit)
         if unit_col_idx is not None and unit_col_idx < len(df.columns):
             uc = str(df.iloc[ri, unit_col_idx]).strip()
             if uc and uc.lower() not in ("nan", "none", ""):
                 unit = uc
 
-        # ── Extract numeric value ─────────────────────────────────────────────
+        # Value: preferred column then first numeric column
         found_val: Optional[float] = None
-
-        # Try preferred value column first (e.g. "Average")
         if value_col_idx is not None and value_col_idx < len(df.columns):
             found_val = parse_numeric_value(df.iloc[ri, value_col_idx])
-
-        # Fallback: first numeric in columns 1+
         if found_val is None:
             for ci in range(1, len(df.columns)):
                 if ci == unit_col_idx:
@@ -612,27 +641,127 @@ def _extract_matrix_params_from_sheet(
 
         if found_val is None:
             continue
-
-        # ── Unit conversion → mg/L (skip for native-unit params) ─────────────
-        if matched_param in _MATRIX_NATIVE_UNIT_PARAMS or not unit:
-            params[matched_param] = found_val
-            logs.append(
-                f"[Excel Matrix] '{sheet_name}' r{ri + 1}: "
-                f"{matched_param} = {found_val} (native)"
-            )
-        else:
-            val_mg_L = convert_to_mg_L(found_val, unit)
-            if val_mg_L is None:
-                val_mg_L = found_val  # already mg/L or unknown unit — use as-is
-            params[matched_param] = val_mg_L
-            logs.append(
-                f"[Excel Matrix] '{sheet_name}' r{ri + 1}: "
-                f"{matched_param} = {val_mg_L} mg/L  (raw {found_val} {unit})"
-            )
+        _store_param(params, matched, found_val, unit,
+                     f"'{sheet_name}' r{ri + 1} (row-layout)", logs)
 
     if params:
         logs.append(
-            f"[Excel Matrix] '{sheet_name}': {len(params)} param(s) extracted: "
+            f"[Excel Matrix] '{sheet_name}' row-layout: {len(params)} found: "
+            f"{list(params.keys())}"
+        )
+    return params
+
+
+def _extract_column_layout_matrix(
+    df: "pd.DataFrame",
+    sheet_name: str,
+    logs: List[str],
+) -> Dict[str, float]:
+    """
+    Column layout: parameter names are in a header row (columns B onwards);
+    column A contains row-type labels like 'Unit', 'Average', 'Maximum'.
+
+    Typical structure (Saint-Rivalain style):
+      Row k:   [ignored]  | COD | BOD5 | TKN | Copper | …
+      Row k+1: Unit        | mg/L | mg/L | mg/L | mg/L | …
+      Row k+2: Average …   | 100  | 11   | 8.5  | 0.02  | …
+    """
+    params: Dict[str, float] = {}
+    if df.empty or len(df.columns) < 3:
+        return params
+
+    # ── Find the header row: the row with the most parameter keyword hits ──────
+    best_row = -1
+    best_count = 0
+    best_col_map: Dict[int, str] = {}  # col_index → canonical_param
+
+    for ri in range(min(15, len(df))):
+        col_map: Dict[int, str] = {}
+        for ci in range(1, len(df.columns)):  # skip column A
+            cell = str(df.iloc[ri, ci]).strip()
+            if not cell or cell.lower() in ("nan", "none", ""):
+                continue
+            if cell.lower().strip() in _SUM_PARAM_LOWER:
+                continue
+            matched = _keyword_match(cell.lower())
+            if matched and ci not in col_map:
+                col_map[ci] = matched
+        if len(col_map) > best_count:
+            best_count = len(col_map)
+            best_row = ri
+            best_col_map = col_map
+
+    if best_count < 2:
+        return params  # Not enough signal for column layout
+
+    logs.append(
+        f"[Excel Matrix] '{sheet_name}': column-layout header at row {best_row + 1} "
+        f"({best_count} params detected)"
+    )
+
+    # ── Find unit row and value row after the header ───────────────────────────
+    _UNIT_A = {"unit", "units", "unité", "unites", "unités", "unite"}
+    _VALUE_A_STARTS = (
+        "average", "avg", "mean", "typical", "value", "valeur",
+        "moyenne", "concentration",
+    )
+
+    unit_row: Optional[int] = None
+    value_row: Optional[int] = None
+
+    for ri in range(best_row + 1, min(best_row + 15, len(df))):
+        col_a = str(df.iloc[ri, 0]).strip().lower()
+        col_a_clean = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", col_a).strip()
+        if col_a_clean in _UNIT_A and unit_row is None:
+            unit_row = ri
+        elif any(col_a_clean.startswith(s) for s in _VALUE_A_STARTS) and value_row is None:
+            value_row = ri
+
+    # Fallback: first row after the header that has numerics in matched columns
+    if value_row is None:
+        for ri in range(best_row + 1, min(best_row + 15, len(df))):
+            if ri == unit_row:
+                continue
+            if any(
+                ci < len(df.columns) and parse_numeric_value(df.iloc[ri, ci]) is not None
+                for ci in best_col_map
+            ):
+                value_row = ri
+                break
+
+    if value_row is None:
+        logs.append(f"[Excel Matrix] '{sheet_name}': column-layout — no value row found")
+        return params
+
+    logs.append(
+        f"[Excel Matrix] '{sheet_name}': unit row="
+        f"{unit_row + 1 if unit_row is not None else 'N/A'}, "
+        f"value row={value_row + 1}"
+    )
+
+    # ── Extract each detected column ──────────────────────────────────────────
+    for ci, canonical in best_col_map.items():
+        if canonical in params or ci >= len(df.columns):
+            continue
+
+        # Unit: from the unit row, else from the header cell, else default
+        unit = "" if canonical in _MATRIX_NATIVE_UNIT_PARAMS else "mg/L"
+        header_cell = str(df.iloc[best_row, ci]).strip()
+        unit = _parse_unit_from_cell(header_cell, unit)
+        if unit_row is not None and ci < len(df.columns):
+            uc = str(df.iloc[unit_row, ci]).strip()
+            if uc and uc.lower() not in ("nan", "none", ""):
+                unit = uc
+
+        found_val = parse_numeric_value(df.iloc[value_row, ci])
+        if found_val is None:
+            continue
+        _store_param(params, canonical, found_val, unit,
+                     f"'{sheet_name}' col {ci + 1} (col-layout)", logs)
+
+    if params:
+        logs.append(
+            f"[Excel Matrix] '{sheet_name}' column-layout: {len(params)} found: "
             f"{list(params.keys())}"
         )
     return params
