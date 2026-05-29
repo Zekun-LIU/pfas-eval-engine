@@ -395,6 +395,30 @@ def is_pfca_only(names: list) -> bool:
     return all(get_pfas_info(n).get("group") == "carboxylate" for n in names)
 
 
+def is_ftoh(name: str) -> Tuple[bool, Optional[int]]:
+    """
+    Return (True, x) if the species is an x:2 FTOH fluorotelomer alcohol.
+
+    x:2 FTOH compounds (x = 1–20) cannot be reliably analyzed by LC-MS/MS.
+    GC-MS is required for accurate quantification.
+    Used in Module 2 Rule R7.
+
+    Detection strategy:
+      1. Check PFAS_SPECIES_DB group == 'FTOH'
+      2. Fallback regex for names not in the DB
+    """
+    info = get_pfas_info(name)
+    if info.get("group") == "FTOH":
+        # Extract the x value from the canonical name (e.g. "6:2 FTOH" → 6)
+        m = re.match(r"^(\d+):2\s*FTOH", normalize_pfas_name(name).strip(), re.IGNORECASE)
+        return True, int(m.group(1)) if m else (True, None)[1]
+    # Regex fallback for unrecognised FTOH species
+    m = re.match(r"^(\d+):2\s*FTOH\b", name.strip(), re.IGNORECASE)
+    if m:
+        return True, int(m.group(1))
+    return False, None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # NUMERIC VALUE PARSING
 # ═══════════════════════════════════════════════════════════════════════════════

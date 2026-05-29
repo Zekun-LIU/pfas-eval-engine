@@ -310,11 +310,24 @@ def _parse_excel_sheet(
         if not analyte_raw or analyte_raw.lower() in ("nan", "none", ""):
             continue
 
-        # Skip known total/sum rows
-        if analyte_raw.lower() in (
+        # Skip known total/sum rows and bulk sum parameters (not individual species)
+        _analyte_lower = analyte_raw.lower().strip()
+        if _analyte_lower in (
             "total", "sum pfas", "total pfas", "pfas sum",
             "sum", "total pfas (calculated)", "σ pfas",
+            # AOF/AOX are bulk sum parameters, NOT individual PFAS species.
+            # Including them distorts composition percentages and suppresses
+            # FTOH/short-chain fractions. Always exclude them.
+            "aof", "aox",
+            "total aof", "total aox",
+            "aof (ng/l)", "aox (ng/l)", "aof (µg/l)", "aox (µg/l)",
+            "adsorbable organic fluorine",
+            "adsorbable organic halides", "adsorbable organic halogens",
+            "extractable organic fluorine", "eof",
+            "top assay", "top",
+            "sum parameter", "sum parameters",
         ):
+            logs.append(f"[Excel] Row {ri + 1}: skipping sum/bulk parameter: {analyte_raw!r}")
             continue
 
         # In fallback mode, skip rows that are clearly metadata (not PFAS analytes)
@@ -615,6 +628,40 @@ _MATRIX_PATTERNS: Dict[str, List[Tuple[str, str]]] = {
     "hardness": [
         (r"hardness\s*[=:~≈]\s*([0-9,]+)\s*(mg/[lL].*?CaCO3|mg/[lL]|ppm)", "mg/L"),
         (r"total\s+hardness\s*[=:~≈]\s*([0-9,]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    # ── Nitrogen species ─────────────────────────────────────────────────────
+    "ammonia": [
+        (r"(?:NH3|NH4\+?|ammonia|ammonium)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+        (r"ammonia[-\s]*N\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "TKN": [
+        (r"TKN\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+        (r"total\s+kjeldahl\s+(?:nitrogen|N)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    # ── Metals (precipitation screening at pH 12) ─────────────────────────────
+    "iron": [
+        (r"(?:total\s+)?(?:iron|Fe(?:\s*(?:2|3)\+?)?)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "manganese": [
+        (r"(?:manganese|Mn)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "copper": [
+        (r"(?:copper|Cu)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "zinc": [
+        (r"(?:zinc|Zn)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "aluminum": [
+        (r"(?:aluminum|aluminium|Al)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "nickel": [
+        (r"(?:nickel|Ni)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "chromium": [
+        (r"(?:total\s+)?(?:chromium|Cr(?:\s*(?:VI|III))?)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+    ],
+    "lead": [
+        (r"(?:lead|Pb)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
     ],
     # ── Supplementary (adsorption/membrane context) ──────────────────────────
     "DOC": [

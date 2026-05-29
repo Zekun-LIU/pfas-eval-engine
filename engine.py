@@ -27,6 +27,7 @@ from utils import (
     format_pct,
     get_pfas_info,
     is_ether_carboxylate,
+    is_ftoh,
     is_pfca_only,
     is_pfsa_sulfonate,
     is_short_telomer,
@@ -46,6 +47,7 @@ VARIABILITY_HIGH_THRESHOLD = 10.0  # max/min total PFAS ratio flagged as high va
 # ── Module 2 ────────────────────────────────────────────────────────────────
 PFSA_KINETICS_PCT          = 20.0  # R4: PFSA fraction > 20% in Primary Set → TECHNICAL
 PROCEED_TOTAL_MAX_MG_L     = 50.0  # R99: total PFAS must be < 50 ppm (mg/L)
+FTOH_CONDITIONAL_PCT       = 50.0  # R7: FTOH fraction ≥ 50% → CONDITIONAL (GC-MS required)
 
 # ── Module 3 (spec thresholds) ───────────────────────────────────────────────
 M3_COD_MAX_MG_L            = 250.0
@@ -55,6 +57,21 @@ M3_NITRATE_HIGH            = 20.0  # > 20 mg/L (as ion)
 M3_CHLORIDE_CORROSION      = 1000.0
 M3_FLUORIDE_TOF            = 100.0
 M3_HARDNESS_PRECIP         = 100.0  # mg/L as CaCO3 — caustic dosing precipitation risk
+M3_AMMONIA_HIGH            = 400.0  # mg/L — above tested range; impact unknown
+M3_TKN_HIGH                = 10.0   # mg/L — avoid oxidative pretreatment above this
+M3_METAL_FLAG_PPM          = 1.0    # mg/L — metals above this flag for engineering review
+
+# Metals tracked for precipitation screening (pH 12 risk)
+_TRACKED_METALS: Dict[str, str] = {
+    "iron":      "Fe",
+    "manganese": "Mn",
+    "copper":    "Cu",
+    "zinc":      "Zn",
+    "aluminum":  "Al",
+    "nickel":    "Ni",
+    "chromium":  "Cr",
+    "lead":      "Pb",
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -116,7 +133,7 @@ class Module2Result:
     flags: List[FlagItem]
     treatment_implications: List[str]
     operating_scenarios: List[str]
-    status_contribution: str     # "CRITICAL" | "PROCEED" | "INFORMATIONAL"
+    status_contribution: str     # "CRITICAL" | "CONDITIONAL" | "PROCEED" | "INFORMATIONAL"
 
 
 @dataclass
@@ -492,6 +509,61 @@ def run_module2(
             ),
         ))
 
+    # ── R7: FTOH Analytical Concern (priority 7) ─────────────────────────────
+    # x:2 FTOH compounds cannot be analyzed by LC-MS/MS — GC-MS required.
+    # If FTOH ≥ 50% of total PFAS composition → CONDITIONAL (analytical limitation).
+    # If FTOH < 50% → INFO flag only, evaluation proceeds unchanged.
+    ftoh_detected = []
+    for s in module1.species:
+        if s.detected:
+            ftoh_flag, _ = is_ftoh(s.name)
+            if ftoh_flag:
+                ftoh_detected.append(s)
+
+    if ftoh_detected:
+        ftoh_total_pct = sum(s.percentage for s in ftoh_detected)
+        ftoh_names = [s.name for s in ftoh_detected]
+        ftoh_conc_str = ", ".join(
+            f"{s.name} ({format_conc_auto(s.conc_mg_L)}, {s.percentage:.1f}%)"
+            for s in ftoh_detected
+        )
+
+        if ftoh_total_pct >= FTOH_CONDITIONAL_PCT:
+            flags.append(FlagItem(
+                severity="special_handling", rule_id="R7",
+                message=(
+                    f"FTOH detected as dominant fraction: {ftoh_conc_str}. "
+                    f"FTOH accounts for {ftoh_total_pct:.1f}% of total PFAS. "
+                    "Status raised to CONDITIONAL — analytical verification required."
+                ),
+                detail=(
+                    "x:2 Fluorotelomer alcohols (FTOHs) cannot be reliably analyzed by LC-MS/MS. "
+                    "GC-MS is required for accurate quantification. "
+                    "Because FTOH represents ≥50% of reported PFAS composition, the overall profile may be "
+                    "incomplete or inaccurate without GC-MS confirmation. "
+                    "Evaluation is CONDITIONAL pending GC-MS verification of the FTOH fraction."
+                ),
+            ))
+            treatment_implications.append(
+                f"FTOH dominant composition ({ftoh_total_pct:.1f}%): GC-MS analysis required before treatment design."
+            )
+            if status not in ("CRITICAL",):
+                status = "CONDITIONAL"
+        else:
+            flags.append(FlagItem(
+                severity="info", rule_id="R7",
+                message=(
+                    f"FTOH detected (minor fraction): {ftoh_conc_str} "
+                    f"({ftoh_total_pct:.1f}% of total PFAS). "
+                    "Note: x:2 FTOH cannot be analyzed by LC-MS/MS — GC-MS recommended."
+                ),
+                detail=(
+                    "FTOH fraction <50% of total PFAS — evaluation proceeds without status change. "
+                    "Ensure GC-MS data is available for these species. "
+                    "LC-MS/MS reported values for FTOH compounds may underestimate actual concentrations."
+                ),
+            ))
+
     # ── R99: Proceed Condition (priority 99) ─────────────────────────────────
     # Trigger: ALL primary species are PFCA AND total PFAS < 50 ppm
     all_pfca = is_pfca_only(primary_set) if primary_set else False
@@ -540,6 +612,8 @@ _PARAM_NICE = {
     "DOC":          "DOC (Dissolved Organic Carbon)",
     "nitrate":      "Nitrate (NO₃⁻)",
     "NO2":          "Nitrite (NO₂⁻)",
+    "ammonia":      "Ammonia / Ammonium (NH₃/NH₄⁺)",
+    "TKN":          "TKN (Total Kjeldahl Nitrogen)",
     "UV254":        "UV₂₅₄ Absorbance",
     "UVT254":       "UV₂₅₄ Transmittance",
     "chloride":     "Chloride (Cl⁻)",
@@ -553,16 +627,29 @@ _PARAM_NICE = {
     "temperature":  "Temperature",
     "flow_rate":    "Flow Rate",
     "sample_color": "Sample Color",
+    # Metals
+    "iron":         "Iron (Fe)",
+    "manganese":    "Manganese (Mn)",
+    "copper":       "Copper (Cu)",
+    "zinc":         "Zinc (Zn)",
+    "aluminum":     "Aluminum (Al)",
+    "nickel":       "Nickel (Ni)",
+    "chromium":     "Chromium (Cr)",
+    "lead":         "Lead (Pb)",
 }
 _PARAM_UNITS = {
     "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
     "nitrate": "mg/L", "NO2": "mg/L",
+    "ammonia": "mg/L", "TKN": "mg/L",
     "UV254": "cm⁻¹", "UVT254": "%",
     "chloride": "mg/L", "fluoride": "mg/L",
     "hardness": "mg/L as CaCO₃", "TDS": "mg/L",
     "sulfate": "mg/L", "pH": "", "turbidity": "NTU",
     "TSS": "mg/L", "temperature": "°C", "flow_rate": "(raw)",
     "sample_color": "",
+    "iron": "mg/L", "manganese": "mg/L", "copper": "mg/L",
+    "zinc": "mg/L", "aluminum": "mg/L", "nickel": "mg/L",
+    "chromium": "mg/L", "lead": "mg/L",
 }
 
 
@@ -777,6 +864,81 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
             ))
             status = "CONDITIONAL"
 
+    # ── M3_R6: Ammonia / Ammonium ─────────────────────────────────────────────
+    # ≤ 400 mg/L: tested range, no observed adverse effects.
+    # > 400 mg/L: outside tested range; impact unknown; flag for validation.
+    if (nh3 := detected.get("ammonia")) is not None:
+        nh3 = float(nh3)
+        if nh3 > M3_AMMONIA_HIGH:
+            flags.append(FlagItem(
+                severity="warning", rule_id="M3_R6",
+                message=(
+                    f"Ammonia/ammonium elevated: {nh3:.0f} mg/L > {M3_AMMONIA_HIGH:.0f} mg/L (tested range). "
+                    "Impact on process currently unknown — additional testing required."
+                ),
+                detail=(
+                    f"Claros has tested ammonia/ammonium concentrations up to ~{M3_AMMONIA_HIGH:.0f} mg/L "
+                    "without significant adverse effects on reaction performance. "
+                    f"At {nh3:.0f} mg/L, the concentration is outside the experimentally validated range. "
+                    "This is not a Critical Concern — the opportunity may still proceed, "
+                    "but bench-scale validation at this ammonia level is recommended before full-scale design."
+                ),
+            ))
+        else:
+            flags.append(FlagItem(
+                severity="ok", rule_id="M3_R6",
+                message=f"Ammonia/ammonium {nh3:.0f} mg/L — within tested range (≤{M3_AMMONIA_HIGH:.0f} mg/L). No concern.",
+            ))
+
+    # ── M3_R7: Total Kjeldahl Nitrogen (TKN) ─────────────────────────────────
+    # > 10 mg/L: cannot determine NH3 vs organic-N split.
+    # As precaution: avoid oxidative pretreatment (organic-N may oxidise → NO3/NO2).
+    if (tkn := detected.get("TKN")) is not None:
+        tkn = float(tkn)
+        if tkn > M3_TKN_HIGH:
+            flags.append(FlagItem(
+                severity="warning", rule_id="M3_R7",
+                message=(
+                    f"TKN elevated: {tkn:.1f} mg/L > {M3_TKN_HIGH:.0f} mg/L. "
+                    "Oxidative pretreatment not recommended without further nitrogen speciation."
+                ),
+                detail=(
+                    f"TKN of {tkn:.1f} mg/L indicates significant total organic + ammonia nitrogen, "
+                    "but does not specify the split between ammonia/ammonium and organic nitrogen. "
+                    "Organic nitrogen can be oxidised into nitrate and nitrite under oxidative pretreatment conditions, "
+                    "which may inhibit downstream PFAS treatment performance (see M3_R2). "
+                    "As a precaution, avoid oxidative pretreatment approaches until nitrogen speciation is confirmed. "
+                    "This is a process consideration — evaluation may still proceed."
+                ),
+            ))
+
+    # ── M3_R8: Metals Precipitation at pH 12 ─────────────────────────────────
+    # Any metal > 1 mg/L: flag for engineering review (potential precipitate during caustic dosing).
+    metals_flagged = []
+    for param_key, symbol in _TRACKED_METALS.items():
+        val = detected.get(param_key)
+        if val is not None:
+            val_f = float(val)
+            if val_f > M3_METAL_FLAG_PPM:
+                metals_flagged.append((symbol, param_key, val_f))
+
+    if metals_flagged:
+        metal_str = ", ".join(f"{sym} = {v:.2f} mg/L" for sym, _, v in metals_flagged)
+        flags.append(FlagItem(
+            severity="warning", rule_id="M3_R8",
+            message=(
+                f"Metal(s) above {M3_METAL_FLAG_PPM:.0f} mg/L threshold: {metal_str}. "
+                "May generate precipitates at pH 12 — engineering review recommended."
+            ),
+            detail=(
+                "During caustic (NaOH) dosing for pH adjustment in treatment systems, pH can reach 12 or above. "
+                "At this pH, dissolved metals typically precipitate as hydroxides (e.g., Fe(OH)₃, Mn(OH)₂, Cu(OH)₂). "
+                "Precipitate accumulation may foul reactor internals, electrodes, or membranes. "
+                "Engineering review is recommended to assess pre-softening or metals removal pre-treatment. "
+                "This flag does not automatically change evaluation status."
+            ),
+        ))
+
     # ── Missing required params flag ──────────────────────────────────────────
     if missing_required:
         flags.append(FlagItem(
@@ -885,6 +1047,16 @@ def _determine_status(
         reasons += critical_msgs[:3]
         return "CRITICAL", reasons
 
+    # M2 CONDITIONAL (e.g. FTOH dominant fraction — R7)
+    m2_conditional_flags = [
+        f.message for sr in sample_results
+        for f in sr.module2.flags
+        if sr.module2.status_contribution == "CONDITIONAL"
+    ]
+    if m2_conditional_flags:
+        reasons += m2_conditional_flags[:2]
+        return "CONDITIONAL", reasons
+
     # Matrix CONDITIONAL
     if module3.status_contribution == "CONDITIONAL":
         warning_flags = [f.message for f in module3.flags if f.severity == "warning"]
@@ -912,6 +1084,8 @@ def _per_sample_status(m1: Module1Result, m2: Module2Result) -> str:
         return "CRITICAL"
     if m2.status_contribution == "CRITICAL":
         return "CRITICAL"
+    if m2.status_contribution == "CONDITIONAL":
+        return "CONDITIONAL"
     if any(f.severity == "warning" for f in m1.flags + m2.flags):
         return "CONDITIONAL"
     return "PROCEED"

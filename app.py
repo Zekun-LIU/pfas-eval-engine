@@ -379,12 +379,16 @@ def _render_module3(m3: Module3Result) -> None:
     _MATRIX_UNITS = {
         "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
         "nitrate": "mg/L", "NO2": "mg/L",
+        "ammonia": "mg/L", "TKN": "mg/L",
         "UV254": "cm⁻¹", "UVT254": "%",
         "chloride": "mg/L", "fluoride": "mg/L",
         "hardness": "mg/L as CaCO₃", "TDS": "mg/L",
         "sulfate": "mg/L", "pH": "", "turbidity": "NTU",
         "TSS": "mg/L", "temperature": "°C", "flow_rate": "(raw)",
         "sample_color": "",
+        "iron": "mg/L", "manganese": "mg/L", "copper": "mg/L",
+        "zinc": "mg/L", "aluminum": "mg/L", "nickel": "mg/L",
+        "chromium": "mg/L", "lead": "mg/L",
     }
     _MATRIX_NICE = {
         "COD": "COD (Chemical Oxygen Demand) ★",
@@ -392,6 +396,8 @@ def _render_module3(m3: Module3Result) -> None:
         "DOC": "DOC (Dissolved Organic Carbon)",
         "nitrate": "Nitrate NO₃⁻ ★",
         "NO2": "Nitrite NO₂⁻ ★",
+        "ammonia": "Ammonia / Ammonium (NH₃/NH₄⁺)",
+        "TKN": "TKN (Total Kjeldahl Nitrogen)",
         "UV254": "UV₂₅₄ Absorbance ☆",
         "UVT254": "UV₂₅₄ Transmittance ☆",
         "chloride": "Chloride Cl⁻",
@@ -401,6 +407,10 @@ def _render_module3(m3: Module3Result) -> None:
         "pH": "pH", "turbidity": "Turbidity",
         "TSS": "TSS", "temperature": "Temperature",
         "flow_rate": "Flow Rate", "sample_color": "Sample Color",
+        "iron": "Iron (Fe)", "manganese": "Manganese (Mn)",
+        "copper": "Copper (Cu)", "zinc": "Zinc (Zn)",
+        "aluminum": "Aluminum (Al)", "nickel": "Nickel (Ni)",
+        "chromium": "Chromium (Cr)", "lead": "Lead (Pb)",
     }
 
     st.markdown('<div class="section-header">Module 3 — Water Matrix Screening</div>',
