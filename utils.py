@@ -251,31 +251,66 @@ PFESA_2PLUS2_EXCLUDES: frozenset = frozenset(["F-53B", "73606-19-6"])
 # UNIT CONVERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# All keys must be lowercase for the normalising lookup below.
+# Covers: slash, space-before-L, dot·, superscript⁻¹, hyphen, and locale variants.
 _UNIT_TO_MG_L: Dict[str, float] = {
-    "ng/l": 1e-6,  "ng/L": 1e-6,  "ppt": 1e-6,
+    # ── ng/L ────────────────────────────────────────────────────────────────
+    "ng/l": 1e-6, "ng/L": 1e-6,
+    "ng l-1": 1e-6, "ng·l-1": 1e-6, "ng·l⁻¹": 1e-6,
+    "ng/l-1": 1e-6,
+    "ppt": 1e-6,
+    # ── µg/L (ASCII mu, Unicode mu, Greek mu) ───────────────────────────────
     "ug/l": 1e-3,  "ug/L": 1e-3,
-    "µg/l": 1e-3,  "µg/L": 1e-3,
-    "μg/l": 1e-3,  "μg/L": 1e-3,
-    "ppb":  1e-3,
+    "µg/l": 1e-3,  "µg/L": 1e-3,   # U+00B5 MICRO SIGN
+    "μg/l": 1e-3,  "μg/L": 1e-3,   # U+03BC GREEK SMALL LETTER MU
+    "ug l-1": 1e-3, "µg l-1": 1e-3, "μg l-1": 1e-3,
+    "µg·l-1": 1e-3, "μg·l-1": 1e-3,
+    "µg·l⁻¹": 1e-3, "μg·l⁻¹": 1e-3,
+    "ppb": 1e-3,
+    # ── mg/L ────────────────────────────────────────────────────────────────
     "mg/l": 1.0,   "mg/L": 1.0,
-    "ppm":  1.0,
+    "mg l-1": 1.0, "mg·l-1": 1.0,  "mg·l⁻¹": 1.0,
+    "mg/l-1": 1.0,
+    "ppm": 1.0,
+    # ── g/L (rare, but some reports use it for TDS/TSS) ─────────────────────
+    "g/l": 1000.0, "g/L": 1000.0,
+    "g l-1": 1000.0,
 }
+
+# Pre-build a normalised lookup (strip spaces, lower, replace unicode mu → u)
+_UNIT_NORM: Dict[str, float] = {}
+for _k, _v in _UNIT_TO_MG_L.items():
+    _norm = _k.lower().replace("µ", "u").replace("μ", "u").replace(" ", "")
+    _UNIT_NORM[_norm] = _v
 
 
 def convert_to_mg_L(value: float, unit: str) -> Optional[float]:
-    """Convert a concentration value to mg/L. Returns None for unknown units."""
-    factor = _UNIT_TO_MG_L.get(unit) or _UNIT_TO_MG_L.get(unit.strip().lower())
+    """
+    Convert a concentration value to mg/L.
+    Accepts many real-world unit variants (spaces, dots, superscripts, Unicode mu).
+    Returns None for unrecognised units.
+    """
+    if not unit:
+        return None
+    # Direct lookup first (fast path)
+    factor = _UNIT_TO_MG_L.get(unit)
+    if factor is not None:
+        return value * factor
+    # Normalised lookup: lowercase, collapse spaces, replace Unicode mu → u
+    norm = unit.strip().lower().replace("µ", "u").replace("μ", "u").replace(" ", "")
+    factor = _UNIT_NORM.get(norm)
     return value * factor if factor is not None else None
 
 
 def detect_unit_from_text(text: str) -> Optional[str]:
-    """Infer the concentration unit from a column header or free text."""
-    t = text.lower().strip()
-    if "ng/l" in t or "ppt" in t:
+    """Infer the dominant concentration unit from a column header or free text block."""
+    # Normalise: collapse Unicode mu variants to 'u', lowercase
+    t = text.lower().replace("µ", "u").replace("μ", "u").strip()
+    if "ng/l" in t or "ppt" in t or "ng l" in t:
         return "ng/L"
-    if any(u in t for u in ("ug/l", "µg/l", "μg/l", "ppb")):
+    if any(u in t for u in ("ug/l", "ppb", "ug l")):
         return "ug/L"
-    if "mg/l" in t or "ppm" in t:
+    if "mg/l" in t or "ppm" in t or "mg l" in t:
         return "mg/L"
     return None
 
@@ -459,7 +494,13 @@ def parse_numeric_value(raw: Any) -> Optional[float]:
     if s.startswith("<") or s.startswith("≤"):
         return None  # do_not_assume_zero per spec
 
-    s_clean = s.replace(",", "").strip()
+    # Distinguish European decimal comma ("1,5" → 1.5) from
+    # thousands separator ("1,234" → 1234).
+    # Heuristic: single comma followed by exactly 1–2 digits at end = decimal.
+    if re.match(r"^\d+,\d{1,2}$", s):
+        s_clean = s.replace(",", ".")
+    else:
+        s_clean = s.replace(",", "").strip()
     try:
         return float(s_clean)
     except ValueError:

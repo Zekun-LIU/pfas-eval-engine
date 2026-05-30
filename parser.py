@@ -309,6 +309,10 @@ def _parse_excel_sheet(
         re.IGNORECASE,
     )
 
+    # Forward-fill column A to handle merged cells (merged analyte name cells
+    # appear as value in the first row of the merge, NaN in the rest).
+    df_raw = _forward_fill_col_a(df_raw)
+
     for ri in range(data_start_row, len(df_raw)):
         row = df_raw.iloc[ri]
         analyte_raw = str(row.iloc[0]).strip()
@@ -400,78 +404,305 @@ def _parse_excel_sheet(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Keywords for matching water-quality parameter names found in Excel cells.
-# Supports two layouts:
-#   ROW layout  – parameter names in column A, one row per parameter
+#
+# Supports two table orientations:
+#   ROW layout    – parameter name in column A, one row per parameter
 #   COLUMN layout – parameter names in a header row, one column per parameter
-#                   (common in French/EU lab reports, e.g. Saint-Rivalain)
+#
 # Keys = canonical param names used by the engine.
-# Bare metal symbols (Fe, Cu…) are omitted to avoid false positives.
+# Values = lowercase match strings.
+#
+# Matching rules (see _keyword_match):
+#   • Exact match always tried first.
+#   • Starts-with match allowed for keywords with len > 2 (prevents "fe" matching "feed").
+#   • Pre-comma prefix tried: "Iron, dissolved" → try prefix "iron".
+#   • Parenthetical qualifier stripped: "Iron (total)" → try "iron".
+#
+# Languages covered: English, French, German, Dutch, Spanish, Italian, Portuguese.
 _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
+    # ── Oxygen demand ────────────────────────────────────────────────────────
     "COD": [
-        "cod", "chemical oxygen demand", "dco",
-        "demande chimique en oxygène", "demande chimique en oxygene",
+        "cod", "chemical oxygen demand",
+        "dco", "demande chimique en oxygène", "demande chimique en oxygene",
+        "csb", "chemischer sauerstoffbedarf",   # German
+        "czv", "chemisch zuurstofverbruik",      # Dutch
+        "dqo", "demanda quimica de oxigeno",     # Spanish/Portuguese
+        "richiesta chimica ossigeno",             # Italian
     ],
-    "BOD": ["bod", "bod5", "bod 5", "biological oxygen demand", "dbo", "dbo5"],
-    "TOC": ["toc", "total organic carbon", "carbone organique total", "cot"],
-    "DOC": ["doc", "dissolved organic carbon", "carbone organique dissous"],
+    "BOD": [
+        "bod", "bod5", "bod 5", "bod7",
+        "biological oxygen demand", "biochemical oxygen demand",
+        "dbo", "dbo5",                           # French/Spanish
+        "bsb", "bsb5", "bsb 5", "bsb7",         # German (biochemischer sauerstoffbedarf)
+        "bzv", "bzv5",                           # Dutch
+    ],
+    "TOC": [
+        "toc", "total organic carbon",
+        "carbone organique total", "cot",        # French
+        "gesamter organischer kohlenstoff",      # German
+        "totaal organisch koolstof",             # Dutch
+        "carbono organico total",               # Spanish/Portuguese
+    ],
+    "DOC": [
+        "doc", "dissolved organic carbon",
+        "carbone organique dissous",             # French
+        "gelöster organischer kohlenstoff",      # German
+    ],
+    # ── Nitrogen species ─────────────────────────────────────────────────────
     "TKN": [
-        "tkn", "total kjeldahl nitrogen", "kjeldahl nitrogen",
-        # "Nitrogen Kjeldahl" column header used in French reports
-        "nitrogen kjeldahl",
-        "ntk", "azote kjeldahl", "azote total kjeldahl",
+        "tkn",
+        "total kjeldahl nitrogen", "kjeldahl nitrogen", "nitrogen kjeldahl",
+        "ntk", "azote kjeldahl", "azote total kjeldahl",  # French
+        "kjeldahl-stickstoff", "stickstoff kjeldahl",     # German
+        "kjeldahl-stikstof",                              # Dutch
+        "nitrogeno kjeldahl",                             # Spanish
     ],
     "ammonia": [
-        "nh3", "nh4", "ammonia", "ammonium",
-        "nh3-n", "nh4-n", "ammoniac", "azote ammoniacal",
-        "azote nh4", "azote ammonium",
+        "nh3", "nh4",
+        "ammonia", "ammonium", "ammoniacal nitrogen",
+        "nh3-n", "nh4-n", "nh4+",
+        "ammoniac", "azote ammoniacal", "azote nh4", "azote ammonium",  # French
+        "ammonium-stickstoff", "ammoniak",                               # German
+        "ammoniumstikstof",                                              # Dutch
+        "nitrógeno amoniacal", "amoniaco",                               # Spanish
     ],
-    "nitrate": ["no3", "nitrate", "nitrates", "no3-n", "azote nitrate", "azote no3"],
-    "nitrite": ["no2", "nitrite", "nitrites", "no2-n"],
-    "TN":      ["total nitrogen", "azote total", "azote global"],
-    "TP":      ["total phosphorus", "phosphore total"],
-    "phosphate": ["po4", "phosphate", "phosphates"],
-    "sulfate":   ["so4", "sulfate", "sulphate", "sulfates"],
-    "chloride":  ["chloride", "chlorides", "chlorure", "chlorures"],
-    "fluoride":  ["fluoride", "fluorides", "fluorure", "fluorures"],
+    "nitrate": [
+        "no3", "nitrate", "nitrates", "no3-n",
+        "azote nitrate", "azote no3",            # French
+        "nitrat", "nitrat-stickstoff",           # German
+        "nitraat",                               # Dutch
+        "nitrato",                               # Spanish/Italian/Portuguese
+    ],
+    "nitrite": [
+        "no2", "nitrite", "nitrites", "no2-n",
+        "nitrit",                                # German
+        "nitriet",                               # Dutch
+        "nitrito",                               # Spanish/Italian
+    ],
+    "TN": [
+        "tn", "total nitrogen", "total n",
+        "azote total", "azote global",           # French
+        "gesamtstickstoff",                      # German
+        "totaal stikstof",                       # Dutch
+        "nitrogeno total",                       # Spanish
+    ],
+    "TP": [
+        "tp", "total phosphorus",
+        "phosphore total",                       # French
+        "gesamtphosphor",                        # German
+        "totaal fosfor",                         # Dutch
+        "fosforo total",                         # Spanish/Italian
+    ],
+    "phosphate": ["po4", "phosphate", "phosphates", "phosphat"],
+    # ── Carbon / organics ────────────────────────────────────────────────────
+    "sulfate": [
+        "so4", "sulfate", "sulphate", "sulfates", "sulphates",
+        "sulfat",                                # German
+        "sulfaat",                               # Dutch
+        "sulfato",                               # Spanish/Portuguese
+    ],
+    "chloride": [
+        "chloride", "chlorides",
+        "chlorure", "chlorures",                 # French
+        "chlorid",                               # German
+        "chloride",                              # Dutch (same)
+        "cloruro",                               # Spanish/Italian
+    ],
+    "fluoride": [
+        "fluoride", "fluorides",
+        "fluorure", "fluorures",                 # French
+        "fluorid",                               # German
+        "fluoride",                              # Dutch
+        "fluoruro",                              # Spanish
+    ],
+    # ── Physical / general ───────────────────────────────────────────────────
     "pH": ["ph"],
     "conductivity": [
-        "conductivity", "conductivite", "conductivité",
-        "electrical conductivity", "specific conductance", "conductance",
-        # "Dissolved salts" column in French reports = conductivity (mS/cm)
-        "dissolved salts", "sels dissous",
+        "conductivity", "electrical conductivity", "specific conductance",
+        "conductance",
+        "conductivite", "conductivité", "conductance spécifique",  # French
+        "dissolved salts", "sels dissous",       # French shorthand
+        "leitfähigkeit", "elektrische leitfähigkeit",              # German
+        "geleidbaarheid",                        # Dutch
+        "conductividad",                         # Spanish
+        "conducibilità",                         # Italian
     ],
-    "turbidity": ["turbidity", "turbidite", "turbidité"],
-    "hardness":  ["hardness", "total hardness", "durete", "dureté", "th"],
-    "TDS":       ["tds", "total dissolved solids", "dissolved solids"],
+    "turbidity": [
+        "turbidity",
+        "turbidite", "turbidité",                # French
+        "trübung",                               # German
+        "troebelheid",                           # Dutch
+        "turbidez",                              # Spanish/Portuguese
+        "torbidità",                             # Italian
+    ],
+    "hardness": [
+        "hardness", "total hardness",
+        "durete", "dureté", "dureté totale",     # French
+        "th",                                    # French acronym
+        "härte", "gesamthärte",                  # German
+        "hardheid",                              # Dutch
+        "dureza",                                # Spanish
+        "durezza",                               # Italian
+    ],
+    "TDS": [
+        "tds", "total dissolved solids", "dissolved solids",
+        "matières dissoutes", "résidu sec",      # French
+        "gelöste feststoffe",                    # German
+        "opgeloste vaste stoffen",               # Dutch
+        "solidos disueltos totales",             # Spanish
+    ],
     "TSS": [
-        "tss", "total suspended solids",
+        "tss", "total suspended solids", "suspended solids", "solids",
         "matieres en suspension", "matières en suspension", "mes",
-        "suspended solids",
-        # "Solids" alone used in some reports as TSS shorthand
-        "solids",
+        "matières en suspension totales",        # French
+        "schwebstoffe",                          # German
+        "zwevende stoffen",                      # Dutch
+        "solidos suspendidos totales",           # Spanish
     ],
-    "alkalinity": ["alkalinity", "total alkalinity", "alcalinite", "alcalinité", "tac"],
-    "UV254":      ["uv254", "uv-254", "uv 254", "uv@254", "uv abs 254"],
-    "temperature": ["temperature", "température"],
-    # Metals — full names + "total X" / "X total" only (no bare symbols)
-    "iron":      ["iron", "total iron", "iron total", "fer", "fer total", "total fer"],
-    "manganese": ["manganese", "total manganese", "manganese total",
-                  "manganèse", "manganèse total"],
-    "copper":    ["copper", "total copper", "copper total", "cuivre", "cuivre total"],
-    "zinc":      ["zinc", "total zinc", "zinc total"],
-    "aluminum":  ["aluminum", "aluminium", "total aluminum", "total aluminium",
-                  "aluminium total", "aluminum total"],
-    "nickel":    ["nickel", "total nickel", "nickel total"],
-    "chromium":  ["chromium", "total chromium", "chromium total",
-                  "chrome", "chrome total", "total chrome",
-                  "chromium vi", "chromium iii"],
-    "lead":      ["lead", "total lead", "lead total", "plomb", "plomb total"],
-    "arsenic":   ["arsenic", "total arsenic", "arsenic total"],
-    "mercury":   ["mercury", "mercure", "mercury total"],
-    "cadmium":   ["cadmium", "total cadmium", "cadmium total"],
-    "barium":    ["barium", "baryum"],
-    "calcium":   ["calcium", "calcium total"],
-    "magnesium": ["magnesium", "magnésium", "magnesium total"],
+    "alkalinity": [
+        "alkalinity", "total alkalinity",
+        "alcalinite", "alcalinité", "tac",       # French (titre alcalimétrique)
+        "alkalinität",                           # German
+        "alkaliniteit",                          # Dutch
+        "alcalinidad",                           # Spanish
+    ],
+    "UV254": [
+        "uv254", "uv-254", "uv 254", "uv@254", "uv abs 254",
+        "uv-absorption 254", "uv-abs",
+    ],
+    "temperature": [
+        "temperature", "temp",
+        "température",                           # French
+        "temperatur",                            # German/Dutch
+        "temperatura",                           # Spanish/Italian/Portuguese
+    ],
+    # ── Metals ────────────────────────────────────────────────────────────────
+    # Strategy: match full names AND bare symbol (exact only, len=2 → no starts-with).
+    "iron": [
+        "iron", "total iron", "iron total", "iron dissolved",
+        "fe",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "fer", "fer total", "total fer",         # French
+        "eisen", "gesamteisen",                  # German
+        "ijzer",                                 # Dutch
+        "hierro",                                # Spanish
+        "ferro",                                 # Italian/Portuguese
+    ],
+    "manganese": [
+        "manganese", "total manganese", "manganese total",
+        "mn",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "manganèse", "manganèse total",          # French
+        "mangan",                                # German/Dutch
+        "manganeso",                             # Spanish
+        "manganese",                             # Italian (same)
+    ],
+    "copper": [
+        "copper", "total copper", "copper total",
+        "cu",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "cuivre", "cuivre total",                # French
+        "kupfer",                                # German
+        "koper",                                 # Dutch
+        "cobre",                                 # Spanish/Portuguese
+        "rame",                                  # Italian
+    ],
+    "zinc": [
+        "zinc", "total zinc", "zinc total",
+        "zn",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "zinco",                                 # Italian/Portuguese
+        "zinc",                                  # Spanish/Dutch (same)
+        "zink",                                  # German/Dutch
+    ],
+    "aluminum": [
+        "aluminum", "aluminium", "total aluminum", "total aluminium",
+        "aluminium total", "aluminum total",
+        "al",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "aluminio",                              # Spanish
+        "alluminio",                             # Italian
+    ],
+    "nickel": [
+        "nickel", "total nickel", "nickel total",
+        "ni",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "nichel",                                # Italian
+        "nikel",                                 # Dutch
+        "niquel",                                # Spanish/Portuguese
+    ],
+    "chromium": [
+        "chromium", "total chromium", "chromium total", "chromium vi", "chromium iii",
+        "cr",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "chrome", "chrome total", "total chrome", "chrome vi",  # French
+        "chrom", "gesamtchrom",                  # German
+        "chroom",                                # Dutch
+        "cromo",                                 # Spanish/Italian
+    ],
+    "lead": [
+        "lead", "total lead", "lead total",
+        "pb",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "plomb", "plomb total",                  # French
+        "blei",                                  # German
+        "lood",                                  # Dutch
+        "plomo",                                 # Spanish
+        "piombo",                                # Italian
+        "chumbo",                                # Portuguese
+    ],
+    "arsenic": [
+        "arsenic", "total arsenic", "arsenic total",
+        "as",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "arsen",                                 # German
+        "arsenico",                              # Spanish/Italian
+        "arsênio",                               # Portuguese
+    ],
+    "mercury": [
+        "mercury", "total mercury", "mercury total",
+        "hg",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "mercure",                               # French
+        "quecksilber",                           # German
+        "kwik",                                  # Dutch
+        "mercurio",                              # Spanish/Italian
+        "mercúrio",                              # Portuguese
+    ],
+    "cadmium": [
+        "cadmium", "total cadmium", "cadmium total",
+        "cd",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "cadmio",                                # Spanish/Italian
+    ],
+    "barium": [
+        "barium", "total barium",
+        "ba",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "baryum",                                # French
+        "bario",                                 # Spanish/Italian
+    ],
+    "calcium": [
+        "calcium", "total calcium",
+        "ca",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "calcio",                                # Spanish/Italian/Portuguese
+        "kalk",                                  # Dutch informal
+    ],
+    "magnesium": [
+        "magnesium", "total magnesium",
+        "mg",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "magnésium",                             # French
+        "magnesio",                              # Spanish/Italian
+    ],
+    "boron": [
+        "boron", "total boron",
+        "bore",                                  # French
+        "bor",                                   # German/Dutch/Spanish
+        "boro",                                  # Italian/Portuguese
+    ],
+    "selenium": [
+        "selenium", "total selenium",
+        "sélénium",                              # French
+        "selen",                                 # German/Dutch
+        "selenio",                               # Spanish/Italian
+    ],
+    "silver": [
+        "silver", "total silver",
+        "ag",                                    # symbol — EXACT MATCH ONLY (len=2)
+        "argent",                                # French
+        "silber",                                # German
+        "zilver",                                # Dutch
+        "plata",                                 # Spanish
+        "argento",                               # Italian
+    ],
 }
 
 # Parameters that stay in their native unit (not converted to mg/L)
@@ -489,19 +720,39 @@ _SUM_PARAM_LOWER = frozenset({
 
 def _keyword_match(cell_lower: str) -> Optional[str]:
     """
-    Return the canonical parameter name if cell_lower matches any keyword,
-    otherwise None.  cell_lower should already be stripped + lowercased.
+    Return the canonical parameter name if cell_lower matches any keyword.
+
+    Matching tries (in order):
+      1. Exact match on raw lowercased cell
+      2. Exact match after stripping all parenthetical qualifiers
+         "iron (total)"  → "iron",  "fe (ii)" → "fe"
+      3. Exact match on the part before the first comma
+         "iron, dissolved" → "iron",  "cr, total" → "cr"
+      4. Starts-with match — only for keywords with len > 2
+         (prevents "fe" matching "feed", "al" matching "alkalinity")
+         "iron total" starts with "iron" ✓,  "no3-n" starts with "no3" ✓
     """
-    cell_clean = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", cell_lower).strip()
-    cell_clean = cell_clean.rstrip(",;: ")
+    raw = cell_lower.strip()
+    if not raw:
+        return None
+
+    # Build candidate forms
+    no_paren = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", raw).strip().rstrip(",;: ")
+    before_comma = no_paren.split(",")[0].strip()
+    candidates = {raw, no_paren, before_comma}
+
     for param, keywords in _MATRIX_EXCEL_KEYWORDS.items():
         for kw in keywords:
-            if cell_clean == kw:
+            # Exact match on any candidate form
+            if kw in candidates:
                 return param
-            if cell_lower.startswith(kw) and (
-                len(cell_lower) == len(kw) or not cell_lower[len(kw)].isalpha()
-            ):
-                return param
+            # Starts-with (only safe for longer keywords)
+            if len(kw) > 2:
+                for cand in candidates:
+                    if cand.startswith(kw) and (
+                        len(cand) == len(kw) or not cand[len(kw)].isalpha()
+                    ):
+                        return param
     return None
 
 
@@ -579,6 +830,23 @@ def _extract_matrix_params_from_sheet(
     return params
 
 
+def _forward_fill_col_a(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Return a copy of df with column A NaN values forward-filled.
+    Handles merged cells: pandas reads merged cells as value in first row,
+    NaN in subsequent rows of the merged range.
+    """
+    df = df.copy()
+    last_val = None
+    for ri in range(len(df)):
+        cell = str(df.iloc[ri, 0]).strip()
+        if cell and cell.lower() not in ("nan", "none", ""):
+            last_val = cell
+        elif last_val is not None:
+            df.iloc[ri, 0] = last_val
+    return df
+
+
 def _extract_row_layout_matrix(
     df: "pd.DataFrame",
     sheet_name: str,
@@ -586,20 +854,31 @@ def _extract_row_layout_matrix(
 ) -> Dict[str, float]:
     """
     Row layout: column A contains parameter names; values are in columns B+.
-    Optional dedicated "Unit" column and "Average"/"Mean" preferred column.
+    Handles merged cells in column A via forward-fill.
+    Detects optional "Unit" column and "Average"/"Mean" preferred value column.
     """
     params: Dict[str, float] = {}
+    df = _forward_fill_col_a(df)
 
-    # Find unit column and preferred value column from the first few rows
-    _UNIT_HDR = {"unit", "units", "unité", "unites", "unités", "unite", "uom"}
+    _UNIT_HDR = {
+        "unit", "units", "unité", "unites", "unités", "unite", "uom",
+        "einheit",          # German
+        "eenheid",          # Dutch
+        "unidad",           # Spanish
+        "unità",            # Italian
+    }
     _VALUE_HDR = {
         "average", "avg", "mean", "typical", "value", "valeur",
         "moyenne", "résultat", "resultat", "concentration",
+        "mittelwert", "durchschnitt",   # German
+        "gemiddelde",                   # Dutch
+        "promedio", "media",            # Spanish/Italian
     }
     unit_col_idx: Optional[int] = None
     value_col_idx: Optional[int] = None
 
-    for ri in range(min(6, len(df))):
+    # Search first 10 rows for header columns
+    for ri in range(min(10, len(df))):
         for ci in range(len(df.columns)):
             cell = str(df.iloc[ri, ci]).strip().lower()
             if cell in _UNIT_HDR and unit_col_idx is None:
@@ -618,7 +897,6 @@ def _extract_row_layout_matrix(
         if not matched or matched in params:
             continue
 
-        # Unit: from cell parenthesis, then dedicated column
         unit = "" if matched in _MATRIX_NATIVE_UNIT_PARAMS else "mg/L"
         unit = _parse_unit_from_cell(cell_val, unit)
         if unit_col_idx is not None and unit_col_idx < len(df.columns):
@@ -626,7 +904,6 @@ def _extract_row_layout_matrix(
             if uc and uc.lower() not in ("nan", "none", ""):
                 unit = uc
 
-        # Value: preferred column then first numeric column
         found_val: Optional[float] = None
         if value_col_idx is not None and value_col_idx < len(df.columns):
             found_val = parse_numeric_value(df.iloc[ri, value_col_idx])
@@ -658,26 +935,31 @@ def _extract_column_layout_matrix(
     logs: List[str],
 ) -> Dict[str, float]:
     """
-    Column layout: parameter names are in a header row (columns B onwards);
-    column A contains row-type labels like 'Unit', 'Average', 'Maximum'.
+    Column layout: parameter names span a header row (columns B+);
+    column A holds row-type labels ('Unit', 'Average', 'Maximum', etc.).
 
-    Typical structure (Saint-Rivalain style):
-      Row k:   [ignored]  | COD | BOD5 | TKN | Copper | …
-      Row k+1: Unit        | mg/L | mg/L | mg/L | mg/L | …
-      Row k+2: Average …   | 100  | 11   | 8.5  | 0.02  | …
+    Searches up to row 40 for the header, to handle reports with long
+    preamble text before the data table starts.
+
+    Typical structure:
+      Row k:   [label]   | COD  | BOD5 | TKN  | Copper | …
+      Row k+1: Unit       | mg/L | mg/L | mg/L | mg/L   | …
+      Row k+2: Average… | 100  | 11   | 8.5  | 0.02   | …
     """
     params: Dict[str, float] = {}
     if df.empty or len(df.columns) < 3:
         return params
 
-    # ── Find the header row: the row with the most parameter keyword hits ──────
+    # ── Find the header row (most keyword hits across columns) ─────────────────
+    # Search up to row 40 — many reports have a long preamble
+    SEARCH_DEPTH = min(40, len(df))
     best_row = -1
     best_count = 0
-    best_col_map: Dict[int, str] = {}  # col_index → canonical_param
+    best_col_map: Dict[int, str] = {}
 
-    for ri in range(min(15, len(df))):
+    for ri in range(SEARCH_DEPTH):
         col_map: Dict[int, str] = {}
-        for ci in range(1, len(df.columns)):  # skip column A
+        for ci in range(len(df.columns)):   # include column A (some sheets skip it)
             cell = str(df.iloc[ri, ci]).strip()
             if not cell or cell.lower() in ("nan", "none", ""):
                 continue
@@ -692,7 +974,7 @@ def _extract_column_layout_matrix(
             best_col_map = col_map
 
     if best_count < 2:
-        return params  # Not enough signal for column layout
+        return params
 
     logs.append(
         f"[Excel Matrix] '{sheet_name}': column-layout header at row {best_row + 1} "
@@ -700,16 +982,22 @@ def _extract_column_layout_matrix(
     )
 
     # ── Find unit row and value row after the header ───────────────────────────
-    _UNIT_A = {"unit", "units", "unité", "unites", "unités", "unite"}
+    _UNIT_A = {
+        "unit", "units", "unité", "unites", "unités", "unite",
+        "einheit", "eenheid", "unidad", "unità",
+    }
     _VALUE_A_STARTS = (
         "average", "avg", "mean", "typical", "value", "valeur",
         "moyenne", "concentration",
+        "mittelwert", "durchschnitt", "gemiddelde", "promedio", "media",
     )
 
     unit_row: Optional[int] = None
     value_row: Optional[int] = None
 
-    for ri in range(best_row + 1, min(best_row + 15, len(df))):
+    # Search up to 20 rows after the header
+    AFTER_DEPTH = min(best_row + 20, len(df))
+    for ri in range(best_row + 1, AFTER_DEPTH):
         col_a = str(df.iloc[ri, 0]).strip().lower()
         col_a_clean = re.sub(r"\s*[\(\[<][^\)\]>]*[\)\]>]", "", col_a).strip()
         if col_a_clean in _UNIT_A and unit_row is None:
@@ -717,9 +1005,9 @@ def _extract_column_layout_matrix(
         elif any(col_a_clean.startswith(s) for s in _VALUE_A_STARTS) and value_row is None:
             value_row = ri
 
-    # Fallback: first row after the header that has numerics in matched columns
+    # Fallback: first row after header that has numeric values in matched columns
     if value_row is None:
-        for ri in range(best_row + 1, min(best_row + 15, len(df))):
+        for ri in range(best_row + 1, AFTER_DEPTH):
             if ri == unit_row:
                 continue
             if any(
