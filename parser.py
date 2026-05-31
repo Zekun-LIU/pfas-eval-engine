@@ -12,7 +12,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -28,6 +28,19 @@ from utils import (
 # ═══════════════════════════════════════════════════════════════════════════════
 # PARSED DATA CONTAINER
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class SampleMetadata:
+    """
+    Semantic metadata about a sample column, populated by the LLM pre-parser.
+    Carries information that the rule-based parser cannot derive from structure alone.
+    """
+    # True when this column represents a statistical roll-up (Average, Maximum …)
+    # rather than an independent physical measurement.
+    is_statistical_summary: bool = False
+    # "average" | "maximum" | "minimum" | "median" | "typical" | ""
+    summary_type: str = ""
+
 
 @dataclass
 class ParsedData:
@@ -68,6 +81,16 @@ class ParsedData:
     has_pdf: bool = False
     has_text: bool = False
 
+    # ── LLM pre-parser outputs (populated only when LLM mode is active) ──────
+    # Per-sample semantic metadata (statistical summary flags, etc.)
+    sample_metadata: Dict[str, SampleMetadata] = field(default_factory=dict)
+    # Notes and warnings produced by the LLM during extraction
+    llm_parse_notes: List[str] = field(default_factory=list)
+    # Raw JSON string returned by the LLM (for debug tab)
+    llm_raw_response: str = ""
+    # Project context extracted by LLM (customer, site, country, flow rate)
+    llm_project_context: Dict[str, Any] = field(default_factory=dict)
+
     def merge(self, other: "ParsedData") -> None:
         """Merge another ParsedData into self (samples are combined)."""
         for sample, data in other.pfas_samples.items():
@@ -96,6 +119,12 @@ class ParsedData:
             self.has_pdf = True
         if other.has_text:
             self.has_text = True
+        self.sample_metadata.update(other.sample_metadata)
+        self.llm_parse_notes += other.llm_parse_notes
+        if other.llm_project_context:
+            self.llm_project_context.update(other.llm_project_context)
+        if other.llm_raw_response:
+            self.llm_raw_response = other.llm_raw_response
 
     @property
     def has_pfas_data(self) -> bool:

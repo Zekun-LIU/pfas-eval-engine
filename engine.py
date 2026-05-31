@@ -34,7 +34,7 @@ from utils import (
     is_short_telomer,
     normalize_pfas_name,
 )
-from parser import ParsedData
+from parser import ParsedData, SampleMetadata
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENGINE THRESHOLDS  (spec-aligned)
@@ -1470,9 +1470,28 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         sample_results.append(SampleResult("(no quantified data)", dummy_m1, dummy_m2, dummy_status))
 
     # ── Multi-sample variability ──────────────────────────────────────────────
-    variability_ratio, variability_flag = _compute_variability(sample_results)
-    if variability_ratio is not None:
-        logs.append(f"[M1-VAR] Variability ratio: {variability_ratio:.2f}")
+    # Skip variability computation when all samples are statistical summaries
+    # (e.g. "Average concentration" and "Maximum concentration" from the same
+    # effluent stream).  Computing max/min across those is semantically wrong.
+    _all_statistical = (
+        bool(parsed.sample_metadata)
+        and len(parsed.sample_metadata) >= len(sample_results)
+        and all(
+            parsed.sample_metadata.get(sr.sample_name, SampleMetadata()).is_statistical_summary
+            for sr in sample_results
+        )
+    )
+    if _all_statistical:
+        variability_ratio, variability_flag = None, None
+        logs.append(
+            "[M1-VAR] Skipped — all samples are statistical summaries "
+            "(Average / Maximum / etc.), not independent measurements. "
+            "Variability ratio would be misleading."
+        )
+    else:
+        variability_ratio, variability_flag = _compute_variability(sample_results)
+        if variability_ratio is not None:
+            logs.append(f"[M1-VAR] Variability ratio: {variability_ratio:.2f}")
 
     # ── Module 3 ──────────────────────────────────────────────────────────────
     logs.append(f"[M3] {len(parsed.matrix_params)} matrix parameters")

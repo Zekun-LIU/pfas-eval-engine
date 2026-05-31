@@ -46,6 +46,115 @@ from utils import (
     status_badge_html,
 )
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API KEY HELPER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_api_key() -> str | None:
+    """Return Anthropic API key from Streamlit secrets, or None if not configured."""
+    try:
+        return st.secrets.get("ANTHROPIC_API_KEY") or None
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM EMAIL GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key: str) -> str:
+    """
+    Use Claude Haiku to write a professional business email from evaluation results.
+    Falls back to the template draft if the API call fails.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        return result.email_draft
+
+    # Build a compact structured summary for the LLM
+    lines: list[str] = [f"OVERALL STATUS: {result.overall_status}"]
+    if project_context.get("customer_name"):
+        lines.append(f"CUSTOMER: {project_context['customer_name']}")
+    if project_context.get("site_name"):
+        lines.append(f"SITE: {project_context['site_name']}")
+    if project_context.get("country"):
+        lines.append(f"COUNTRY: {project_context['country']}")
+
+    # Worst-case sample PFAS profile
+    worst = None
+    if result.samples:
+        worst = max(
+            result.samples,
+            key=lambda sr: {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
+        )
+    if worst and worst.module1.total_conc_mg_L > 0:
+        m1 = worst.module1
+        lines.append(f"\nPFAS PROFILE (worst-case sample: {worst.sample_name}):")
+        lines.append(f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}")
+        for s in m1.species[:5]:
+            if s.detected:
+                lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)} ({s.percentage:.1f}%)")
+        for cat, frac in sorted(m1.category_fractions.items(), key=lambda x: -x[1]):
+            if frac > 0.01:
+                lines.append(
+                    f"  Category — {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}"
+                )
+
+    # Key flags
+    lines.append("\nKEY FLAGS:")
+    seen: set = set()
+    for sr in result.samples:
+        for f in sr.module2.flags:
+            if f.severity in ("critical", "commercial", "technical") and f.message not in seen:
+                lines.append(f"  [{f.severity.upper()}] {f.message}")
+                seen.add(f.message)
+    for f in result.module3.flags:
+        if f.severity == "warning" and f.message not in seen:
+            lines.append(f"  [MATRIX] {f.message}")
+            seen.add(f.message)
+
+    lines.append(f"\nTREATMENT IMPLICATIONS:")
+    for item in result.treatment_summary[:4]:
+        lines.append(f"  - {item}")
+
+    if result.missing_info:
+        lines.append(f"\nMISSING INFORMATION:")
+        for item in result.missing_info[:4]:
+            lines.append(f"  - {item}")
+
+    summary = "\n".join(lines)
+
+    system = (
+        "You are a technical sales engineer at Claros Water Technologies writing an internal "
+        "business email to your team about a PFAS treatment opportunity.\n\n"
+        "Write a professional, concise email (250–350 words) based on the evaluation data below.\n\n"
+        "FORMAT:\n"
+        "Subject: PFAS Treatment Feasibility — [brief site/customer descriptor]\n\n"
+        "[Opening: 2 sentences — what opportunity, what overall conclusion]\n\n"
+        "[PFAS Profile: 2-3 sentences covering key species, concentrations, composition category]\n\n"
+        "[Key Technical Findings: 3-5 bullet points — actual flag messages from the evaluation]\n\n"
+        "[Recommendation: one paragraph — PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED + reasoning]\n\n"
+        "[Next Steps: 2-3 action items]\n\n"
+        "Claros R&D Team | PFAS Evaluation Engine\n\n"
+        "RULES: Use actual species names and concentrations. "
+        "If CRITICAL, make the blocking issue unmissable in the opening. "
+        "Return ONLY the email text — no commentary, no markdown."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            system=system,
+            messages=[{"role": "user", "content": f"EVALUATION RESULTS:\n{summary}"}],
+        )
+        return msg.content[0].text.strip()
+    except Exception as exc:
+        return f"[AI email generation failed: {exc}]\n\n{result.email_draft}"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GLOBAL CSS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -791,22 +900,24 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
     )
 
 
-def _render_email_draft(result: EvaluationResult) -> None:
+def _render_email_draft(result: EvaluationResult, email_text_override: str | None = None) -> None:
     """Render the business email draft tab."""
+    email_text = email_text_override if email_text_override is not None else result.email_draft
+
     st.markdown('<div class="section-header">Internal Business Email Draft</div>',
                 unsafe_allow_html=True)
     st.caption(
         "Auto-generated from evaluation output. Review and edit as needed before sending."
     )
     st.markdown(
-        f'<div class="email-box">{result.email_draft}</div>',
+        f'<div class="email-box">{email_text}</div>',
         unsafe_allow_html=True,
     )
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
             "⬇  Download Email Draft (.txt)",
-            data=result.email_draft,
+            data=email_text,
             file_name="PFAS_Email_Draft.txt",
             mime="text/plain",
         )
@@ -814,7 +925,7 @@ def _render_email_draft(result: EvaluationResult) -> None:
         with st.expander("📋  Select text to copy"):
             st.text_area(
                 "Email text:",
-                value=result.email_draft,
+                value=email_text,
                 height=300,
                 label_visibility="collapsed",
             )
@@ -831,6 +942,34 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
         st.code("\n".join(result.logs), language="text")
 
     if parsed:
+        # ── LLM-specific debug info ───────────────────────────────────────────
+        if parsed.llm_parse_notes:
+            st.markdown("**🤖 LLM Parse Notes:**")
+            for note in parsed.llm_parse_notes:
+                st.info(note)
+
+        if parsed.sample_metadata:
+            st.markdown("**🤖 LLM Sample Metadata:**")
+            meta_rows = [
+                {
+                    "Sample": name,
+                    "Statistical Summary": "Yes" if m.is_statistical_summary else "No",
+                    "Type": m.summary_type or "—",
+                }
+                for name, m in parsed.sample_metadata.items()
+            ]
+            st.dataframe(pd.DataFrame(meta_rows), hide_index=True, use_container_width=True)
+
+        if parsed.llm_project_context:
+            st.markdown("**🤖 LLM Project Context:**")
+            ctx_rows = [{"Field": k, "Value": str(v)} for k, v in parsed.llm_project_context.items()]
+            st.dataframe(pd.DataFrame(ctx_rows), hide_index=True, use_container_width=True)
+
+        if parsed.llm_raw_response:
+            with st.expander("🤖 LLM Raw Response (JSON)", expanded=False):
+                st.code(parsed.llm_raw_response, language="json")
+
+        # ── Standard debug info ───────────────────────────────────────────────
         if parsed.warnings:
             st.markdown("**Parser Warnings:**")
             for w in parsed.warnings:
@@ -868,6 +1007,8 @@ if "eval_result" not in st.session_state:
     st.session_state.eval_result = None
 if "parsed_data" not in st.session_state:
     st.session_state.parsed_data = None
+if "llm_email" not in st.session_state:
+    st.session_state.llm_email = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -933,7 +1074,7 @@ with left_col:
 
     email_text = st.text_area(
         "Customer Email / Notes",
-        height=130,
+        height=120,
         placeholder=(
             "Paste customer email or notes here.\n"
             "Example: 'Site water has PFOA 250 ng/L, PFOS 180 ng/L, TFA detected...'\n"
@@ -943,14 +1084,38 @@ with left_col:
     )
 
     goals_text = st.text_area(
-        "Treatment Goals / Business Notes",
+        "Treatment Goals / Customer Objectives",
         height=100,
         placeholder=(
+            "Describe treatment targets, regulatory requirements, or project context.\n"
             "Example: 'Target <70 ng/L combined PFOA+PFOS per EPA MCL.\n"
-            "Drinking water application. Flow 2 MGD. Groundwater site.'"
+            "Drinking water application. Flow 2 MGD. Customer: Veolia France.'"
         ),
-        help="Treatment objectives, regulatory targets, flow rate, site context.",
+        help=(
+            "Treatment objectives, regulatory targets, flow rate, site context. "
+            "When AI parsing is enabled, this is merged with any goals found in the uploaded documents."
+        ),
     )
+
+    # ── AI-assisted parsing toggle ────────────────────────────────────────────
+    _api_key = _get_api_key()
+    st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
+    if _api_key:
+        use_llm = st.toggle(
+            "✨ AI-Assisted Parsing (Claude Haiku)",
+            value=True,
+            help=(
+                "Use Claude Haiku to read the uploaded documents and extract all data. "
+                "Handles flexible layouts, multilingual labels, and statistical-summary detection. "
+                "Falls back to rule-based parsing automatically if the API call fails."
+            ),
+        )
+        st.caption("🟢 API key configured — AI parsing available")
+    else:
+        use_llm = False
+        st.caption(
+            "⚪ AI parsing unavailable — add ANTHROPIC_API_KEY to Streamlit secrets to enable."
+        )
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     run_clicked = st.button("▶  Run Evaluation", type="primary")
@@ -988,19 +1153,60 @@ with right_col:
             with tab_tech:
                 st.warning("Please provide at least one input source before running.")
         else:
-            with st.spinner("Parsing inputs and running evaluation engine…"):
+            spinner_msg = (
+                "✨ AI-assisted parsing + evaluation engine running…"
+                if use_llm else
+                "Parsing inputs and running evaluation engine…"
+            )
+            with st.spinner(spinner_msg):
                 try:
-                    parsed = parse_all(
-                        excel_bytes=excel_file.read() if excel_file else None,
-                        excel_filename=excel_file.name if excel_file else None,
-                        pdf_bytes=pdf_file.read() if pdf_file else None,
-                        pdf_filename=pdf_file.name if pdf_file else None,
-                        email_text=email_text,
-                        goals_text=goals_text,
-                    )
+                    excel_bytes = excel_file.read() if excel_file else None
+                    pdf_bytes   = pdf_file.read()   if pdf_file   else None
+
+                    if use_llm and _api_key:
+                        from llm_parser import parse_with_llm
+                        parsed = parse_with_llm(
+                            excel_bytes=excel_bytes,
+                            excel_filename=excel_file.name if excel_file else None,
+                            pdf_bytes=pdf_bytes,
+                            pdf_filename=pdf_file.name if pdf_file else None,
+                            goals_text=goals_text,
+                            api_key=_api_key,
+                        )
+                        # Also parse any pasted text (email_text) with rule-based and merge
+                        if email_text.strip():
+                            from parser import parse_text
+                            text_result = parse_text(email_text, "")
+                            parsed.merge(text_result)
+                            parsed.customer_notes_text = email_text.strip()
+                    else:
+                        parsed = parse_all(
+                            excel_bytes=excel_bytes,
+                            excel_filename=excel_file.name if excel_file else None,
+                            pdf_bytes=pdf_bytes,
+                            pdf_filename=pdf_file.name if pdf_file else None,
+                            email_text=email_text,
+                            goals_text=goals_text,
+                        )
+
                     eval_result = evaluate(parsed)
                     st.session_state.eval_result = eval_result
                     st.session_state.parsed_data = parsed
+
+                    # ── LLM email generation ──────────────────────────────────
+                    if use_llm and _api_key:
+                        try:
+                            llm_email = _generate_llm_email(
+                                eval_result,
+                                parsed.llm_project_context,
+                                _api_key,
+                            )
+                            st.session_state.llm_email = llm_email
+                        except Exception:
+                            st.session_state.llm_email = None
+                    else:
+                        st.session_state.llm_email = None
+
                     st.rerun()
                 except Exception as exc:
                     import traceback
@@ -1033,7 +1239,18 @@ with right_col:
                 unsafe_allow_html=True,
             )
         else:
-            _render_email_draft(result)
+            llm_email = st.session_state.get("llm_email")
+            if llm_email:
+                email_version = st.radio(
+                    "Email version:",
+                    ["✨ AI-Written (Claude Haiku)", "📄 Template-Generated"],
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+                chosen_email = llm_email if "AI" in email_version else None
+                _render_email_draft(result, email_text_override=chosen_email)
+            else:
+                _render_email_draft(result)
 
     # ── Tab 3: Debug / Logs ───────────────────────────────────────────────────
     with tab_debug:
