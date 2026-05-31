@@ -861,10 +861,21 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
 
     # ── Variability Banner ────────────────────────────────────────────────────
     if result.variability_flag:
+        vf = result.variability_flag
+        if vf.severity == "info":
+            # Stat-range note (Average + Maximum from same stream)
+            _vbg  = "#EFF6FF"; _vborder = "#BFDBFE"; _vcolor = "#1E40AF"
+            _vicon = "🔵"; _vkey = vf.rule_id
+        else:
+            # True high-variability warning
+            _vbg  = "#FFF8EC"; _vborder = "#FFCC00"; _vcolor = "#5C3D00"
+            _vicon = "🟡"; _vkey = "M1-VAR"
         st.markdown(
-            f'<div class="variability-banner">🟡 <strong>[M1-VAR]</strong> '
-            f'{result.variability_flag.message}<br>'
-            f'<span style="font-size:0.8rem;color:#666;">{result.variability_flag.detail}</span>'
+            f'<div style="background:{_vbg}; border:1px solid {_vborder}; border-radius:10px; '
+            f'padding:12px 18px; font-size:0.86rem; color:{_vcolor}; margin:10px 0;">'
+            f'{_vicon} <strong>[{_vkey}]</strong> '
+            f'{vf.message}<br>'
+            f'<span style="font-size:0.80rem; opacity:0.75;">{vf.detail}</span>'
             f'</div>',
             unsafe_allow_html=True,
         )

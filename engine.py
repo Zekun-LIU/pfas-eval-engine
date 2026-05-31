@@ -1470,9 +1470,15 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         sample_results.append(SampleResult("(no quantified data)", dummy_m1, dummy_m2, dummy_status))
 
     # ── Multi-sample variability ──────────────────────────────────────────────
-    # Skip variability computation when all samples are statistical summaries
-    # (e.g. "Average concentration" and "Maximum concentration" from the same
-    # effluent stream).  Computing max/min across those is semantically wrong.
+    # When all rows in the dataset are statistical summaries (Average, Maximum …)
+    # they represent different time-based aggregations of the SAME water stream,
+    # NOT independent physical samples.
+    #
+    # Correct behaviour:
+    #   • Use the MAXIMUM row as the conservative engineering case (worst-case sizing).
+    #   • Compute per-analyte Max/Avg ratio and surface it as informational context.
+    #   • Discard the Average row from the sample list to avoid misleading "2 samples".
+    #   • Never compute a max/min variability ratio across these rows.
     _all_statistical = (
         bool(parsed.sample_metadata)
         and len(parsed.sample_metadata) >= len(sample_results)
@@ -1481,13 +1487,69 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
             for sr in sample_results
         )
     )
+    variability_ratio: Optional[float] = None
+    variability_flag: Optional[FlagItem] = None
+
     if _all_statistical:
-        variability_ratio, variability_flag = None, None
-        logs.append(
-            "[M1-VAR] Skipped — all samples are statistical summaries "
-            "(Average / Maximum / etc.), not independent measurements. "
-            "Variability ratio would be misleading."
-        )
+        # Find the maximum-typed and average-typed entries
+        max_sr: Optional[SampleResult] = None
+        avg_sr: Optional[SampleResult] = None
+        other_srs: List[SampleResult] = []
+
+        for sr in sample_results:
+            stype = parsed.sample_metadata.get(
+                sr.sample_name, SampleMetadata()
+            ).summary_type
+            if stype == "maximum" and max_sr is None:
+                max_sr = sr
+            elif stype in ("average", "typical") and avg_sr is None:
+                avg_sr = sr
+            else:
+                other_srs.append(sr)
+
+        if max_sr and avg_sr:
+            # ── Per-analyte Max/Avg ratio ──────────────────────────────────────
+            max_map = {s.name: s.conc_mg_L for s in max_sr.module1.species if s.conc_mg_L > 0}
+            avg_map = {s.name: s.conc_mg_L for s in avg_sr.module1.species if s.conc_mg_L > 0}
+            ratio_parts: List[str] = []
+            for name in sorted(set(max_map) | set(avg_map)):
+                m_val = max_map.get(name, 0.0)
+                a_val = avg_map.get(name, 0.0)
+                if a_val > 0 and m_val > 0:
+                    ratio_parts.append(f"{name} {m_val / a_val:.1f}×")
+                elif m_val > 0:
+                    ratio_parts.append(f"{name} (max only, not in average)")
+
+            ratio_str = ", ".join(ratio_parts) if ratio_parts else "insufficient overlap"
+
+            variability_flag = FlagItem(
+                severity="info",
+                rule_id="M1-STAT-RANGE",
+                message=(
+                    "Single-site dataset with Average & Maximum rows. "
+                    "Engineering uses Maximum (worst-case). "
+                    f"Max/Avg concentration ratios: {ratio_str}."
+                ),
+                detail=(
+                    "Average and Maximum values are statistical summaries of the same "
+                    "effluent stream — they are NOT independent samples. "
+                    "The Maximum drives equipment sizing and material selection. "
+                    "The Average reflects steady-state operating conditions."
+                ),
+            )
+
+            # Keep only the Maximum as the engineering result
+            sample_results = [max_sr] + other_srs
+            logs.append(
+                f"[M1-STAT] Average+Maximum consolidated → single worst-case result. "
+                f"Max/Avg ratios: {ratio_str}"
+            )
+        else:
+            # Can't pair max/avg — just skip variability, keep all rows
+            logs.append(
+                "[M1-VAR] Skipped — all samples are statistical summaries "
+                "(Average / Maximum / etc.), not independent measurements."
+            )
     else:
         variability_ratio, variability_flag = _compute_variability(sample_results)
         if variability_ratio is not None:
