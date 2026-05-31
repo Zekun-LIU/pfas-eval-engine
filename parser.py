@@ -249,6 +249,206 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     return result
 
 
+def _detect_transposed_layout(df: "pd.DataFrame") -> bool:
+    """
+    Returns True when the sheet uses a *transposed* layout:
+      • Row 0, columns 1+  →  PFAS analyte abbreviations (e.g. PFOS, PFOA, PFBS …)
+      • Column A, rows 1+  →  sample descriptors (e.g. "Average concentration since 2020")
+
+    This is the mirror-image of the normal layout where analyte names appear in
+    column A and sample identifiers appear across the header row.
+
+    A layout is flagged as transposed when ≥ 2 cells in row 0, columns 1+, pass
+    the _looks_like_pfas() test.  The check is only reached when no PFAS name
+    has been found in column A, so false positives are rare.
+    """
+    if len(df) < 2 or len(df.columns) < 2:
+        return False
+
+    pfas_hits = 0
+    for ci in range(1, min(len(df.columns), 30)):
+        cell = str(df.iloc[0, ci]).strip()
+        if cell.lower() in ("nan", "none", ""):
+            continue
+        if _looks_like_pfas(cell):
+            pfas_hits += 1
+            if pfas_hits >= 2:
+                return True
+    return False
+
+
+def _parse_transposed_excel_sheet(
+    df_raw: "pd.DataFrame",
+    sheet_name: str,
+    filename: str,
+    logs: List[str],
+) -> ParsedData:
+    """
+    Parse a *transposed* Excel sheet where:
+      • Row 0 contains PFAS analyte names in columns 1+
+      • Column A contains sample names / statistical descriptors in rows 1+
+      • Data cells are at the intersection (row > 0, col > 0)
+
+    Automatically sets SampleMetadata.is_statistical_summary for rows whose
+    name includes "Average", "Maximum", "Minimum", etc.
+    """
+    result = ParsedData()
+    logs.append(
+        f"[Excel] Sheet '{sheet_name}': TRANSPOSED LAYOUT detected — "
+        "PFAS species in row 0, samples in column A."
+    )
+
+    # ── Step 1: Detect unit from top rows ────────────────────────────────────
+    unit = "ng/L"
+    for ri in range(min(5, len(df_raw))):
+        row_text = " ".join(
+            str(v) for v in df_raw.iloc[ri] if str(v) not in ("nan", "None")
+        )
+        detected = detect_unit_from_text(row_text)
+        if detected:
+            unit = detected
+            logs.append(
+                f"[Excel] Transposed '{sheet_name}': unit '{unit}' detected from row {ri + 1}"
+            )
+            break
+    result.detected_unit = unit
+
+    # ── Step 2: Map column indices → canonical PFAS analyte names ───────────
+    n_cols = len(df_raw.columns)
+    analyte_map: Dict[int, str] = {}  # col_index → canonical name
+    aof_cols: Dict[int, str] = {}     # col_index → "AOF" | "TOF"
+
+    for ci in range(1, n_cols):
+        raw = str(df_raw.iloc[0, ci]).strip()
+        if raw.lower() in ("nan", "none", ""):
+            continue
+        raw_lower = raw.lower()
+        if raw_lower in (
+            "aof", "total aof", "adsorbable organic fluorine",
+        ):
+            aof_cols[ci] = "AOF"
+        elif raw_lower in (
+            "tof", "total organic fluorine", "total fluorine",
+            "total oxidizable fluorine",
+        ):
+            aof_cols[ci] = "TOF"
+        elif _looks_like_pfas(raw):
+            analyte_map[ci] = normalize_pfas_name(raw)
+
+    logs.append(
+        f"[Excel] Transposed '{sheet_name}': "
+        f"{len(analyte_map)} PFAS analyte columns, "
+        f"{len(aof_cols)} AOF/TOF columns"
+    )
+
+    if not analyte_map and not aof_cols:
+        result.warnings.append(
+            f"[Excel] Sheet '{sheet_name}': Transposed layout suspected but "
+            "no PFAS analyte names found in row 0."
+        )
+        return result
+
+    # ── Step 3: Parse rows 1+ — each row is one sample ──────────────────────
+    _STAT_MARKERS = [
+        ("average", "average"), ("avg", "average"), ("mean", "average"),
+        ("maximum", "maximum"), ("max conc", "maximum"),
+        ("minimum", "minimum"), ("min conc", "minimum"),
+        ("median", "median"),
+        ("typical", "typical"), ("representative", "typical"),
+    ]
+
+    pfas_data: Dict[str, Dict[str, float]] = {}
+    nd_data: Dict[str, List[str]] = {}
+
+    for ri in range(1, len(df_raw)):
+        sample_raw = str(df_raw.iloc[ri, 0]).strip()
+        if not sample_raw or sample_raw.lower() in ("nan", "none", ""):
+            continue
+
+        # Strip unit suffixes from the sample name label
+        sample_name = re.sub(
+            r"\s*[\(\[]\s*(?:ng|µg|ug|mg)/[lL].*?[\)\]]", "", sample_raw
+        ).strip()
+        sample_name = re.sub(
+            r"\s*[\(\[]\s*(?:ppt|ppb|ppm).*?[\)\]]", "", sample_name
+        ).strip()
+        if not sample_name:
+            sample_name = f"Sample_{ri}"
+
+        # Detect statistical summary type
+        is_stat = False
+        stat_type = ""
+        _sl = sample_name.lower()
+        for marker, stype in _STAT_MARKERS:
+            if marker in _sl:
+                is_stat = True
+                stat_type = stype
+                break
+
+        if is_stat:
+            result.sample_metadata[sample_name] = SampleMetadata(
+                is_statistical_summary=True, summary_type=stat_type
+            )
+            logs.append(
+                f"[Excel] Transposed row {ri + 1}: '{sample_name}' → "
+                f"statistical summary ({stat_type})"
+            )
+
+        pfas_data[sample_name] = {}
+        nd_data[sample_name] = []
+
+        # PFAS analyte cells
+        for ci, analyte in analyte_map.items():
+            if ci >= len(df_raw.columns):
+                continue
+            raw_val = df_raw.iloc[ri, ci]
+            val = parse_numeric_value(raw_val)
+            if val is not None:
+                val_mg_L = convert_to_mg_L(val, unit)
+                if val_mg_L is not None:
+                    pfas_data[sample_name][analyte] = val_mg_L
+            else:
+                raw_str = (
+                    str(raw_val).strip().lower() if raw_val is not None else ""
+                )
+                if raw_str and raw_str not in ("nan", "none", ""):
+                    if analyte not in nd_data[sample_name]:
+                        nd_data[sample_name].append(analyte)
+
+        # AOF / TOF cells
+        for ci, bulk_key in aof_cols.items():
+            if ci >= len(df_raw.columns):
+                continue
+            raw_val = df_raw.iloc[ri, ci]
+            val = parse_numeric_value(raw_val)
+            if val is not None:
+                val_mg_L = convert_to_mg_L(val, unit)
+                if val_mg_L is not None:
+                    if sample_name not in result.aof_tof_data:
+                        result.aof_tof_data[sample_name] = {}
+                    result.aof_tof_data[sample_name][bulk_key] = val_mg_L
+
+    # Remove empty samples
+    pfas_data = {k: v for k, v in pfas_data.items() if v}
+    nd_data = {k: v for k, v in nd_data.items() if v}
+    result.pfas_samples = pfas_data
+    result.nd_species = nd_data
+
+    logs.append(
+        f"[Excel] Transposed '{sheet_name}': {len(pfas_data)} sample(s) | "
+        f"{sum(len(v) for v in pfas_data.values())} data points"
+    )
+
+    if not pfas_data and not nd_data:
+        result.warnings.append(
+            f"[Excel] Sheet '{sheet_name}': Transposed layout detected but "
+            "no PFAS data could be extracted. "
+            "Verify that row 0 column headers are recognised PFAS abbreviations."
+        )
+
+    return result
+
+
 def _parse_excel_sheet(
     df_raw: "pd.DataFrame",
     sheet_name: str,
@@ -282,6 +482,17 @@ def _parse_excel_sheet(
             break
 
     if data_start_row is None:
+        # Before falling back to generic layout, check whether the sheet is in
+        # *transposed* orientation (PFAS species as column headers in row 0,
+        # sample descriptors in column A).  This handles lab-report exports such
+        # as "Average/Maximum concentration since 2020" in column A with PFAS
+        # abbreviations spread across the header row.
+        if _detect_transposed_layout(df_raw):
+            logs.append(
+                f"[Excel] Sheet '{sheet_name}': delegating to transposed parser"
+            )
+            return _parse_transposed_excel_sheet(df_raw, sheet_name, filename, logs)
+
         # Fallback: treat row 0 as header, row 1+ as data
         header_row_idx = 0
         data_start_row = 1

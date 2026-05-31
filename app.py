@@ -162,131 +162,136 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    /* ── Global typography & background ──────────────────────── */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background-color: #FFFFFF;
+        color: #1D1D1F;
+    }
 
     /* ── Page chrome ──────────────────────────────────────────── */
-    .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1400px; }
+    .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1400px; }
     section[data-testid="stSidebar"] { display: none; }
 
     /* ── Header ───────────────────────────────────────────────── */
     .pfas-header {
-        background: #0F172A;
-        border-bottom: 2px solid #38BDF8;
+        background: linear-gradient(135deg, #1D1D1F 0%, #2C2C2E 100%);
         color: white;
-        padding: 22px 32px 18px 32px;
-        border-radius: 12px;
-        margin-bottom: 20px;
+        padding: 28px 36px 22px 36px;
+        border-radius: 18px;
+        margin-bottom: 24px;
         position: relative;
         overflow: hidden;
     }
-    .pfas-header::before {
+    .pfas-header::after {
         content: '';
-        position: absolute; top: 0; right: 0;
-        width: 300px; height: 100%;
-        background: radial-gradient(ellipse at top right, rgba(56,189,248,0.12), transparent 70%);
+        position: absolute; top: -50px; right: -40px;
+        width: 220px; height: 220px;
+        background: radial-gradient(circle, rgba(0,122,255,0.22) 0%, transparent 70%);
         pointer-events: none;
     }
     .pfas-header h1 {
-        margin: 0; font-size: 1.55rem; font-weight: 700;
-        color: white; letter-spacing: -0.3px;
+        margin: 0; font-size: 1.65rem; font-weight: 700;
+        color: white; letter-spacing: -0.5px; line-height: 1.2;
     }
     .pfas-header .subtitle {
-        font-size: 0.88rem; color: #94A3B8; margin-top: 5px; font-weight: 400;
+        font-size: 0.9rem; color: rgba(255,255,255,0.6); margin-top: 6px; font-weight: 400;
     }
     .pfas-header .byline {
-        font-size: 0.75rem; color: #475569; margin-top: 3px; font-weight: 400;
+        font-size: 0.75rem; color: rgba(255,255,255,0.35); margin-top: 4px;
     }
     .pfas-header .accent-tag {
-        display: inline-block; background: rgba(56,189,248,0.15);
-        color: #38BDF8; border: 1px solid rgba(56,189,248,0.3);
-        border-radius: 4px; font-size: 0.7rem; font-weight: 600;
-        padding: 2px 8px; letter-spacing: 0.5px; margin-top: 8px;
+        display: inline-block; background: rgba(0,122,255,0.22);
+        color: #60A5FA; border: 1px solid rgba(0,122,255,0.4);
+        border-radius: 6px; font-size: 0.68rem; font-weight: 600;
+        padding: 3px 10px; letter-spacing: 1px; margin-top: 10px;
+        text-transform: uppercase;
     }
 
     /* ── Section headers ──────────────────────────────────────── */
     .section-header {
-        font-size: 0.72rem; font-weight: 700; letter-spacing: 1.2px;
-        text-transform: uppercase; color: #38BDF8;
-        margin: 20px 0 10px 0; padding-bottom: 6px;
-        border-bottom: 1px solid rgba(56,189,248,0.2);
+        font-size: 0.68rem; font-weight: 600; letter-spacing: 1.5px;
+        text-transform: uppercase; color: #6E6E73;
+        margin: 22px 0 8px 0;
     }
 
     /* ── Flag rows ────────────────────────────────────────────── */
     .flag-row {
-        padding: 10px 14px; border-radius: 8px;
-        margin-bottom: 8px; font-size: 0.85rem; line-height: 1.55;
-        color: #1E293B !important;
+        padding: 12px 16px; border-radius: 10px;
+        margin-bottom: 8px; font-size: 0.86rem; line-height: 1.6;
+        color: #1D1D1F !important;
     }
-    .flag-critical        { background: #FEF2F2; border-left: 3px solid #EF4444; }
-    .flag-warning         { background: #FFFBEB; border-left: 3px solid #F59E0B; }
-    .flag-info            { background: #EFF6FF; border-left: 3px solid #3B82F6; }
-    .flag-ok              { background: #F0FDF4; border-left: 3px solid #22C55E; }
-    .flag-commercial      { background: #FAF5FF; border-left: 3px solid #A855F7; }
-    .flag-technical       { background: #FFF7ED; border-left: 3px solid #F97316; }
-    .flag-pathway         { background: #F0FDFA; border-left: 3px solid #14B8A6; }
-    .flag-special_handling{ background: #F8FAFC; border-left: 3px solid #64748B; }
-    .flag-row strong      { color: #0F172A !important; }
-    .flag-detail          { font-size: 0.80rem; color: #475569 !important; margin-top: 5px; font-style: italic; }
+    .flag-critical        { background: #FFF1F2; border-left: 3px solid #FF3B30; }
+    .flag-warning         { background: #FFFBEB; border-left: 3px solid #FF9500; }
+    .flag-info            { background: #F0F5FF; border-left: 3px solid #007AFF; }
+    .flag-ok              { background: #F0FFF5; border-left: 3px solid #34C759; }
+    .flag-commercial      { background: #F5F0FF; border-left: 3px solid #AF52DE; }
+    .flag-technical       { background: #FFF8F0; border-left: 3px solid #FF6B00; }
+    .flag-pathway         { background: #F0FFF9; border-left: 3px solid #30D158; }
+    .flag-special_handling{ background: #F8F8F9; border-left: 3px solid #8E8E93; }
+    .flag-row strong      { color: #1D1D1F !important; }
+    .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 5px; font-style: italic; }
 
     /* ── Variability banner ───────────────────────────────────── */
     .variability-banner {
-        background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px;
-        padding: 10px 16px; font-size: 0.85rem; color: #92400E !important; margin: 8px 0;
+        background: #FFF8EC; border: 1px solid #FFCC00; border-radius: 10px;
+        padding: 12px 18px; font-size: 0.86rem; color: #5C3D00 !important; margin: 10px 0;
     }
 
     /* ── Metric cards ─────────────────────────────────────────── */
     .metric-card {
-        background: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px; padding: 14px 16px; text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        background: #F5F5F7;
+        border: 1px solid rgba(0,0,0,0.06);
+        border-radius: 14px; padding: 16px 18px; text-align: center;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
     .metric-card .val {
-        font-size: 1.4rem; font-weight: 700; color: #F1F5F9;
+        font-size: 1.45rem; font-weight: 700; color: #1D1D1F;
         letter-spacing: -0.5px;
     }
     .metric-card .lbl {
-        font-size: 0.70rem; color: #64748B; margin-top: 4px;
+        font-size: 0.68rem; color: #6E6E73; margin-top: 4px;
         text-transform: uppercase; letter-spacing: 0.5px;
     }
 
     /* ── Email box ────────────────────────────────────────────── */
     .email-box {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 22px 26px;
+        background: #F5F5F7;
+        border: 1px solid rgba(0,0,0,0.07);
+        border-radius: 14px;
+        padding: 24px 28px;
         font-family: 'Inter', sans-serif;
-        font-size: 0.84rem;
+        font-size: 0.88rem;
         white-space: pre-wrap;
-        line-height: 1.75;
-        color: #1E293B !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        line-height: 1.8;
+        color: #1D1D1F !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
 
     /* ── Input panel ──────────────────────────────────────────── */
     .input-card {
-        background: #1E293B; border: 1px solid #334155;
-        border-radius: 10px; padding: 16px 18px; margin-bottom: 12px;
+        background: #F5F5F7; border: 1px solid rgba(0,0,0,0.06);
+        border-radius: 12px; padding: 16px 18px; margin-bottom: 12px;
     }
     .input-label {
-        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.8px;
-        text-transform: uppercase; color: #94A3B8; margin-bottom: 8px;
+        font-size: 0.68rem; font-weight: 600; letter-spacing: 0.8px;
+        text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
     }
 
     /* ── Run button ───────────────────────────────────────────── */
     div[data-testid="stButton"] > button {
         width: 100%;
-        background: linear-gradient(135deg, #0EA5E9, #6366F1);
+        background: #007AFF;
         color: white !important; font-weight: 600; font-size: 0.95rem;
-        padding: 12px; border-radius: 8px; border: none;
-        letter-spacing: 0.3px; box-shadow: 0 4px 12px rgba(14,165,233,0.3);
-        transition: all 0.2s ease;
+        padding: 13px; border-radius: 10px; border: none;
+        letter-spacing: 0.2px; box-shadow: 0 2px 8px rgba(0,122,255,0.28);
+        transition: all 0.18s ease;
     }
     div[data-testid="stButton"] > button:hover {
-        box-shadow: 0 6px 18px rgba(14,165,233,0.45);
+        background: #0066DD;
+        box-shadow: 0 4px 16px rgba(0,122,255,0.4);
         transform: translateY(-1px);
     }
 
@@ -296,19 +301,25 @@ st.markdown(
         padding: 3px 10px; font-size: 0.72rem; font-weight: 600;
         margin-right: 4px; letter-spacing: 0.3px;
     }
-    .src-on  { background: rgba(34,197,94,0.15); color: #22C55E; border: 1px solid rgba(34,197,94,0.3); }
-    .src-off { background: rgba(100,116,139,0.1); color: #475569; border: 1px solid rgba(100,116,139,0.2); }
+    .src-on  { background: rgba(52,199,89,0.12); color: #1A7A37; border: 1px solid rgba(52,199,89,0.3); }
+    .src-off { background: rgba(142,142,147,0.1); color: #8E8E93; border: 1px solid rgba(142,142,147,0.2); }
 
     /* ── Footer ───────────────────────────────────────────────── */
     .pfas-footer {
-        text-align: center; font-size: 0.70rem; color: #475569;
+        text-align: center; font-size: 0.70rem; color: #8E8E93;
         margin-top: 40px; padding-top: 14px;
-        border-top: 1px solid #1E293B;
+        border-top: 1px solid #E5E5EA;
         letter-spacing: 0.3px;
     }
 
     /* ── Streamlit tab overrides ──────────────────────────────── */
-    button[data-baseweb="tab"] { font-size: 0.85rem !important; font-weight: 500 !important; }
+    button[data-baseweb="tab"] { font-size: 0.86rem !important; font-weight: 500 !important; }
+
+    /* ── Streamlit divider ────────────────────────────────────── */
+    hr { border-color: #E5E5EA !important; }
+
+    /* ── Streamlit dataframe ──────────────────────────────────── */
+    [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
 
     </style>
     """,

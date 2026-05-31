@@ -630,39 +630,50 @@ def format_pct(value: float) -> str:
 
 
 def status_badge_html(status: str) -> str:
-    """Return an HTML <div> badge styled for the given evaluation status."""
+    """Return an HTML <div> badge styled for the given evaluation status.
+
+    Uses Apple-system color palette:
+      PROCEED     → system green  #34C759
+      CONDITIONAL → system orange #FF9500
+      CRITICAL    → system red    #FF3B30
+    """
     palette = {
-        "PROCEED":     ("#1E8449", "#FFFFFF"),
-        "CONDITIONAL": ("#D4AC0D", "#1C1C1C"),
-        "CRITICAL":    ("#C0392B", "#FFFFFF"),
+        "PROCEED":     ("#34C759", "#FFFFFF"),
+        "CONDITIONAL": ("#FF9500", "#FFFFFF"),
+        "CRITICAL":    ("#FF3B30", "#FFFFFF"),
     }
-    bg, fg = palette.get(status, ("#707B7C", "#FFFFFF"))
+    bg, fg = palette.get(status, ("#8E8E93", "#FFFFFF"))
     return (
         f'<div style="display:inline-block; background:{bg}; color:{fg}; '
-        f'padding:8px 24px; border-radius:6px; font-size:1.25rem; '
-        f'font-weight:700; letter-spacing:2px; text-align:center; '
-        f'box-shadow: 0 2px 4px rgba(0,0,0,0.2);">'
+        f'padding:9px 26px; border-radius:10px; font-size:1.15rem; '
+        f'font-weight:700; letter-spacing:1.5px; text-align:center; '
+        f'font-family: -apple-system, Inter, sans-serif; '
+        f'box-shadow: 0 2px 8px rgba(0,0,0,0.12);">'
         f'{status}</div>'
     )
 
 
 def severity_badge(severity: str) -> str:
-    """Return a small inline HTML severity label for all classification types."""
+    """Return a small inline HTML severity label for all classification types.
+
+    Colour palette aligned with Apple system colours.
+    """
     palette = {
         # Core statuses
-        "critical":       ("#C0392B", "#fff",     "CRITICAL"),
-        "warning":        ("#D4AC0D", "#111",      "WARNING"),
-        "info":           ("#2980B9", "#fff",      "INFO"),
-        "ok":             ("#1E8449", "#fff",      "OK / PROCEED"),
+        "critical":         ("#FF3B30", "#fff", "CRITICAL"),
+        "warning":          ("#FF9500", "#fff", "WARNING"),
+        "info":             ("#007AFF", "#fff", "INFO"),
+        "ok":               ("#34C759", "#fff", "OK / PROCEED"),
         # Spec M2 classifications
-        "commercial":     ("#6C3483", "#fff",      "COMMERCIAL"),
-        "technical":      ("#BA4A00", "#fff",      "TECHNICAL"),
-        "pathway":        ("#117A65", "#fff",      "PATHWAY"),
-        "special_handling": ("#5D6D7E", "#fff",   "SPECIAL HANDLING"),
+        "commercial":       ("#AF52DE", "#fff", "COMMERCIAL"),
+        "technical":        ("#FF6B00", "#fff", "TECHNICAL"),
+        "pathway":          ("#30D158", "#fff", "PATHWAY"),
+        "special_handling": ("#8E8E93", "#fff", "SPECIAL HANDLING"),
     }
-    bg, fg, label = palette.get(severity, ("#707B7C", "#fff", severity.upper()))
+    bg, fg, label = palette.get(severity, ("#8E8E93", "#fff", severity.upper()))
     return (
         f'<span style="background:{bg}; color:{fg}; '
-        f'padding:2px 8px; border-radius:3px; font-size:0.75rem; '
-        f'font-weight:600; letter-spacing:1px;">{label}</span>'
+        f'padding:2px 9px; border-radius:5px; font-size:0.72rem; '
+        f'font-weight:600; letter-spacing:0.8px; font-family:-apple-system,Inter,sans-serif;">'
+        f'{label}</span>'
     )
