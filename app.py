@@ -279,7 +279,14 @@ def _param_traffic_light(key: str, value) -> str:
     if key in ("iron", "manganese", "copper", "zinc", "aluminum",
                "nickel", "chromium", "lead"):
         return "🟢" if v <= M3_METAL_FLAG_PPM else "🟡"
-    # pH, turbidity, TSS, BOD, TP, TN, conductivity, TDS, sulfate, temperature,
+    if key == "TP":
+        # Total Phosphorus: < 1 mg/L OK, 1–10 mg/L Watch, > 10 mg/L Concern
+        if v < 1.0:
+            return "🟢"
+        if v <= 10.0:
+            return "🟡"
+        return "🔴"
+    # pH, turbidity, TSS, BOD, TN, conductivity, TDS, sulfate, temperature,
     # UV254, UVT254, phosphate, arsenic, cadmium, mercury, silver, …
     return "⚪"
 
@@ -465,6 +472,12 @@ def _render_sample_section(
             else:
                 st.warning("No concentration data for this sample.")
 
+        # ── TOF Coverage Analysis — part of Module 1 composition picture ──────
+        # Shows whether the identified PFAS species account for the bulk organic
+        # fluorine reported (AOF/TOF), revealing unknown PFAS if coverage is low.
+        if sr.tof_result is not None:
+            _render_tof_analysis(sr.tof_result)
+
         for f in m1.flags:
             _render_flag(f)
 
@@ -487,10 +500,6 @@ def _render_sample_section(
             with st.expander("Operating Scenario Details"):
                 for sc in m2.operating_scenarios:
                     st.markdown(f"- {sc}")
-
-        # ── TOF / AOF analysis ────────────────────────────────────────────────
-        if sr.tof_result is not None:
-            _render_tof_analysis(sr.tof_result)
 
 
 def _render_module3(m3: Module3Result) -> None:
