@@ -1419,6 +1419,54 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
     pfas_source = parsed.pfas_samples if parsed.pfas_samples else {}
     tof_results: List[TOFAnalysisResult] = []
 
+    # ── Pre-process: merge Average+Maximum statistical rows ────────────────────
+    # When all rows are statistical summaries of the same water stream, merge them
+    # BEFORE M1/M2 runs so that:
+    #   (a) Analytes present in both rows → use Maximum value (worst-case sizing)
+    #   (b) Analytes present ONLY in Average (Maximum was blank in source data) →
+    #       still evaluated at Average value + warning flag added to M1 output
+    # Without this merge, analytes whose Maximum is unknown are silently dropped.
+    # Example: TFA Average = 600 ng/L, TFA Maximum = blank → include TFA at 600 ng/L
+    _sc_max_name: Optional[str] = None
+    _sc_avg_name: Optional[str] = None
+    _sc_avg_only: List[str] = []  # analytes where max is unknown; avg used as fallback
+
+    if parsed.sample_metadata and pfas_source:
+        _stat_keys = {
+            name: parsed.sample_metadata[name]
+            for name in pfas_source
+            if name in parsed.sample_metadata
+            and parsed.sample_metadata[name].is_statistical_summary
+        }
+        if len(_stat_keys) == len(pfas_source) >= 2:
+            _pre_max = next(
+                (n for n, m in _stat_keys.items() if m.summary_type == "maximum"), None
+            )
+            _pre_avg = next(
+                (n for n, m in _stat_keys.items() if m.summary_type in ("average", "typical")), None
+            )
+            if _pre_max and _pre_avg:
+                _max_pfas = pfas_source.get(_pre_max, {})
+                _avg_pfas = pfas_source.get(_pre_avg, {})
+                # Merge: max values preferred; avg used as fallback for blank-max analytes
+                _merged: Dict[str, Optional[float]] = dict(_max_pfas)
+                for sp, val in _avg_pfas.items():
+                    if sp not in _merged:
+                        _merged[sp] = val
+                        _sc_avg_only.append(sp)
+                # Replace pfas_source with single merged entry under the maximum label
+                pfas_source = {_pre_max: _merged}
+                _sc_max_name = _pre_max
+                _sc_avg_name = _pre_avg
+                # AOF/TOF: prefer maximum row; fall back to average if max row has none
+                if _pre_max not in parsed.aof_tof_data and _pre_avg in parsed.aof_tof_data:
+                    parsed.aof_tof_data[_pre_max] = parsed.aof_tof_data[_pre_avg]
+                logs.append(
+                    f"[M1-PRE] Avg+Max merged into single worst-case dataset. "
+                    f"Max analytes: {sorted(_max_pfas.keys())}. "
+                    f"Avg-fallback (max unknown/blank): {_sc_avg_only}."
+                )
+
     if pfas_source:
         for sample_name, pfas_data in pfas_source.items():
             logs.append(f"[M1] Sample '{sample_name}': {len(pfas_data)} analytes")
@@ -1469,16 +1517,11 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         dummy_status = _per_sample_status(dummy_m1, dummy_m2)
         sample_results.append(SampleResult("(no quantified data)", dummy_m1, dummy_m2, dummy_status))
 
-    # ── Multi-sample variability ──────────────────────────────────────────────
-    # When all rows in the dataset are statistical summaries (Average, Maximum …)
-    # they represent different time-based aggregations of the SAME water stream,
-    # NOT independent physical samples.
-    #
-    # Correct behaviour:
-    #   • Use the MAXIMUM row as the conservative engineering case (worst-case sizing).
-    #   • Compute per-analyte Max/Avg ratio and surface it as informational context.
-    #   • Discard the Average row from the sample list to avoid misleading "2 samples".
-    #   • Never compute a max/min variability ratio across these rows.
+    # ── Multi-sample variability & statistical-summary reporting ─────────────
+    # The pre-loop merge already collapsed avg+max into a single dataset, so
+    # sample_results now has exactly one entry (the merged worst-case result).
+    # Here we compute and surface the Max/Avg ratios as context, and flag any
+    # analytes whose Maximum was unknown (assessed at Average value instead).
     _all_statistical = (
         bool(parsed.sample_metadata)
         and len(parsed.sample_metadata) >= len(sample_results)
@@ -1491,64 +1534,65 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
     variability_flag: Optional[FlagItem] = None
 
     if _all_statistical:
-        # Find the maximum-typed and average-typed entries
-        max_sr: Optional[SampleResult] = None
-        avg_sr: Optional[SampleResult] = None
-        other_srs: List[SampleResult] = []
-
-        for sr in sample_results:
-            stype = parsed.sample_metadata.get(
-                sr.sample_name, SampleMetadata()
-            ).summary_type
-            if stype == "maximum" and max_sr is None:
-                max_sr = sr
-            elif stype in ("average", "typical") and avg_sr is None:
-                avg_sr = sr
-            else:
-                other_srs.append(sr)
-
-        if max_sr and avg_sr:
-            # ── Per-analyte Max/Avg ratio ──────────────────────────────────────
-            max_map = {s.name: s.conc_mg_L for s in max_sr.module1.species if s.conc_mg_L > 0}
-            avg_map = {s.name: s.conc_mg_L for s in avg_sr.module1.species if s.conc_mg_L > 0}
+        if _sc_max_name and _sc_avg_name:
+            # ── Per-analyte Max/Avg ratios from original (pre-merge) data ─────
+            orig_max: Dict[str, Optional[float]] = parsed.pfas_samples.get(_sc_max_name, {})
+            orig_avg: Dict[str, Optional[float]] = parsed.pfas_samples.get(_sc_avg_name, {})
             ratio_parts: List[str] = []
-            for name in sorted(set(max_map) | set(avg_map)):
-                m_val = max_map.get(name, 0.0)
-                a_val = avg_map.get(name, 0.0)
+            for name in sorted(set(orig_max) | set(orig_avg)):
+                m_val = (orig_max.get(name) or 0.0)
+                a_val = (orig_avg.get(name) or 0.0)
                 if a_val > 0 and m_val > 0:
                     ratio_parts.append(f"{name} {m_val / a_val:.1f}×")
                 elif m_val > 0:
-                    ratio_parts.append(f"{name} (max only, not in average)")
-
-            ratio_str = ", ".join(ratio_parts) if ratio_parts else "insufficient overlap"
+                    ratio_parts.append(f"{name} max={format_conc_auto(m_val)}, avg=N/A")
+                elif a_val > 0:
+                    ratio_parts.append(f"{name} avg={format_conc_auto(a_val)}, max=unknown")
+            ratio_str = ", ".join(ratio_parts) if ratio_parts else "n/a"
 
             variability_flag = FlagItem(
                 severity="info",
                 rule_id="M1-STAT-RANGE",
                 message=(
-                    "Single-site dataset with Average & Maximum rows. "
-                    "Engineering uses Maximum (worst-case). "
-                    f"Max/Avg concentration ratios: {ratio_str}."
+                    "Single-site dataset — Average & Maximum merged into worst-case assessment. "
+                    f"Max/Avg ratios: {ratio_str}."
                 ),
                 detail=(
-                    "Average and Maximum values are statistical summaries of the same "
-                    "effluent stream — they are NOT independent samples. "
-                    "The Maximum drives equipment sizing and material selection. "
-                    "The Average reflects steady-state operating conditions."
+                    "Average and Maximum are statistical summaries of the same effluent stream, "
+                    "not independent samples. Maximum values drive equipment sizing. "
+                    + (
+                        f"Analytes with unknown Maximum (evaluated at Average): "
+                        f"{', '.join(_sc_avg_only)}. "
+                        "Request confirmed peak concentrations from customer before finalising design."
+                        if _sc_avg_only else ""
+                    )
                 ),
             )
 
-            # Keep only the Maximum as the engineering result
-            sample_results = [max_sr] + other_srs
+            # ── Flag avg-fallback analytes inside M1 output ───────────────────
+            if sample_results and _sc_avg_only:
+                sample_results[0].module1.flags.append(FlagItem(
+                    severity="warning",
+                    rule_id="M1-MAX-UNKNOWN",
+                    message=(
+                        f"Maximum concentration not reported for: {', '.join(_sc_avg_only)}. "
+                        "Worst-case assessment uses Average value — actual peak may be higher."
+                    ),
+                    detail=(
+                        "The Maximum column was blank for these analytes in the source data. "
+                        "Confirm peak concentrations with the customer before equipment sizing."
+                    ),
+                ))
+
             logs.append(
-                f"[M1-STAT] Average+Maximum consolidated → single worst-case result. "
-                f"Max/Avg ratios: {ratio_str}"
+                f"[M1-STAT] Avg+Max merged. Max/Avg ratios: {ratio_str}. "
+                f"Avg-fallback analytes: {_sc_avg_only or 'none'}."
             )
         else:
-            # Can't pair max/avg — just skip variability, keep all rows
+            # Statistical summaries detected but no avg+max pair — just skip variability
             logs.append(
-                "[M1-VAR] Skipped — all samples are statistical summaries "
-                "(Average / Maximum / etc.), not independent measurements."
+                "[M1-VAR] Skipped — all samples are statistical summaries. "
+                "No avg+max pair detected to consolidate."
             )
     else:
         variability_ratio, variability_flag = _compute_variability(sample_results)
