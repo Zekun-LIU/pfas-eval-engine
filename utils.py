@@ -100,6 +100,13 @@ CATEGORY_LABELS: Dict[str, str] = {
 }
 
 # ── Alias map: UPPER-CASE name / CAS / formula → canonical abbreviation ──────
+# Design principle — Acid/anion equivalence:
+#   For all PFAS acids, the protonated form (acid, e.g. CF₃SO₃H) and the
+#   deprotonated form (conjugate base / anion, e.g. CF₃SO₃⁻) are treated as
+#   IDENTICAL by the reactivity engine.  Both aliases map to the same canonical
+#   abbreviation here, so all downstream rules see a single species regardless
+#   of whether the H is present.  This reflects the fact that protonation state
+#   does not affect PFAS treatment reactivity under operating conditions.
 PFAS_ALIASES: Dict[str, str] = {
     # Full names
     "PERFLUOROOCTANOIC ACID":                  "PFOA",
