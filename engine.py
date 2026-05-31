@@ -25,6 +25,7 @@ from utils import (
     classify_pfas,
     format_conc_auto,
     format_pct,
+    get_pfas_f_fraction,
     get_pfas_info,
     is_ether_carboxylate,
     is_ftoh,
@@ -147,11 +148,36 @@ class Module3Result:
 
 
 @dataclass
+class TOFAnalysisResult:
+    """
+    Comparison of theoretical TOF (calculated from quantified PFAS species)
+    versus customer-reported AOF or TOF.
+
+    TOF (Total Organic Fluorine) is measured as mass of F per unit volume.
+    For each known PFAS species:
+        F_contribution (mg F/L) = conc_mg_L × (nF × 18.998) / MW
+
+    If theoretical_TOF / reported_AOF_or_TOF < 50 %:
+        Flag that significant unknown PFAS are present.
+    """
+    sample_name: str
+    measured_type: str            # "AOF" or "TOF"
+    measured_mg_L: float          # reported value in mg F/L
+    theoretical_tof_mg_L: float   # sum of F contributions from known species
+    coverage_ratio: float         # theoretical / measured  (0 – 1+)
+    species_contributions: List[Tuple[str, float, float]]
+    # [(canonical_name, conc_mg_L, F_contrib_mg_L), ...] sorted desc by contrib
+    unknown_pfas_flag: bool       # True if coverage_ratio < 0.50
+    flags: List[FlagItem]
+
+
+@dataclass
 class SampleResult:
     sample_name: str
     module1: Module1Result
     module2: Module2Result
     sample_status: str
+    tof_result: Optional[TOFAnalysisResult] = None
 
 
 @dataclass
@@ -169,6 +195,7 @@ class EvaluationResult:
     data_sources: List[str]
     variability_ratio: Optional[float]
     variability_flag: Optional[FlagItem]
+    tof_results: List[TOFAnalysisResult] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -981,6 +1008,122 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TOF / AOF ANALYSIS  — Theoretical Fluorine Coverage Check
+# ═══════════════════════════════════════════════════════════════════════════════
+
+#  Threshold: if theoretical TOF is below this fraction of reported AOF/TOF,
+#  flag that significant unknown PFAS are present.
+TOF_COVERAGE_THRESHOLD = 0.50   # 50 %
+
+
+def run_tof_analysis(
+    sample_name: str,
+    pfas_data: Dict[str, Optional[float]],     # mg compound / L
+    aof_mg_L: Optional[float] = None,          # mg F / L  (reported AOF)
+    tof_mg_L: Optional[float] = None,          # mg F / L  (reported TOF)
+) -> Optional[TOFAnalysisResult]:
+    """
+    Compare theoretical TOF (computed from quantified PFAS) to the customer-
+    reported AOF or TOF value.
+
+    Theoretical TOF:
+        For each known PFAS species i with concentration c_i (mg/L):
+            F_i (mg F/L) = c_i × (nF_i × 18.998) / MW_i
+
+        Theoretical_TOF = Σ F_i
+
+    Notes:
+    - Only TOF can be calculated theoretically (from molecular composition).
+      AOF depends on adsorption behaviour and cannot be predicted per-molecule.
+      We compare theoretical TOF to whichever bulk measure the customer provides
+      (preferring TOF if both are present, falling back to AOF).
+    - If theoretical_TOF / reported_value < 50 %: flag unknown PFAS present.
+    - Species without MW data in the database are skipped (conservative — omitting
+      them underestimates theoretical TOF).
+
+    Returns None if no bulk fluorine measure was provided.
+    """
+    # Choose reported value (TOF preferred over AOF)
+    if tof_mg_L is not None and tof_mg_L > 0:
+        measured_val = tof_mg_L
+        measured_type = "TOF"
+    elif aof_mg_L is not None and aof_mg_L > 0:
+        measured_val = aof_mg_L
+        measured_type = "AOF"
+    else:
+        return None  # No bulk fluorine data — nothing to compare
+
+    # Calculate theoretical TOF from known species
+    contributions: List[Tuple[str, float, float]] = []
+    theo_tof = 0.0
+    for name, conc_mg_L in pfas_data.items():
+        if conc_mg_L is None or conc_mg_L <= 0:
+            continue
+        f_frac = get_pfas_f_fraction(name)
+        if f_frac is None:
+            continue   # Unknown MW — skip (conservative)
+        f_contrib = conc_mg_L * f_frac
+        theo_tof += f_contrib
+        contributions.append((name, conc_mg_L, f_contrib))
+
+    contributions.sort(key=lambda x: -x[2])
+
+    ratio = theo_tof / measured_val if measured_val > 0 else 0.0
+    unknown_flag = ratio < TOF_COVERAGE_THRESHOLD
+
+    flags: List[FlagItem] = []
+    if unknown_flag:
+        flags.append(FlagItem(
+            severity="warning",
+            rule_id="TOF_COVERAGE",
+            message=(
+                f"Theoretical TOF from identified PFAS = {format_conc_auto(theo_tof)} as F "
+                f"({ratio * 100:.1f}% of reported {measured_type} "
+                f"{format_conc_auto(measured_val)} as F). "
+                "Significant unidentified PFAS species likely present — "
+                "consider expanded analytical scope."
+            ),
+            detail=(
+                "Theoretical TOF is calculated by summing the fluorine mass contribution "
+                "of every quantified PFAS species (F_i = conc_i × n_F_i × 18.998 / MW_i). "
+                f"Because identified species account for only {ratio * 100:.1f}% of the "
+                f"reported {measured_type}, a substantial fraction of the organic fluorine load "
+                "is from PFAS not captured in the targeted analytical panel. "
+                "Recommended actions: (1) TOP (Total Oxidizable Precursor) assay to quantify "
+                "total precursor load; (2) non-targeted screening (HRMS) to identify unknowns; "
+                "(3) expand the standard panel to include FTOHs, FTS, FTSA, and PFASA species "
+                "if not already included."
+            ),
+        ))
+    else:
+        flags.append(FlagItem(
+            severity="info",
+            rule_id="TOF_COVERAGE",
+            message=(
+                f"Theoretical TOF from identified PFAS = {format_conc_auto(theo_tof)} as F "
+                f"({ratio * 100:.1f}% of reported {measured_type} "
+                f"{format_conc_auto(measured_val)} as F). "
+                "Identified species adequately account for reported organic fluorine load."
+            ),
+            detail=(
+                f"Theoretical TOF ≥ {TOF_COVERAGE_THRESHOLD * 100:.0f}% of reported {measured_type} — "
+                "no significant unexplained fluorine fraction detected at this threshold."
+            ),
+        ))
+
+    return TOFAnalysisResult(
+        sample_name=sample_name,
+        measured_type=measured_type,
+        measured_mg_L=measured_val,
+        theoretical_tof_mg_L=theo_tof,
+        coverage_ratio=ratio,
+        species_contributions=contributions,
+        unknown_pfas_flag=unknown_flag,
+        flags=flags,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MULTI-SAMPLE VARIABILITY  (spec: M1 detect_multi_sample_variability)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1274,6 +1417,8 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
     sample_results: List[SampleResult] = []
 
     pfas_source = parsed.pfas_samples if parsed.pfas_samples else {}
+    tof_results: List[TOFAnalysisResult] = []
+
     if pfas_source:
         for sample_name, pfas_data in pfas_source.items():
             logs.append(f"[M1] Sample '{sample_name}': {len(pfas_data)} analytes")
@@ -1285,7 +1430,25 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                 email_text=parsed.customer_notes_text,
             )
             s_status = _per_sample_status(m1, m2)
-            sample_results.append(SampleResult(sample_name, m1, m2, s_status))
+
+            # ── TOF / AOF analysis ────────────────────────────────────────────
+            bulk = parsed.aof_tof_data.get(sample_name, {})
+            tof_res = run_tof_analysis(
+                sample_name=sample_name,
+                pfas_data={k: v for k, v in pfas_data.items() if v is not None},
+                aof_mg_L=bulk.get("AOF"),
+                tof_mg_L=bulk.get("TOF"),
+            )
+            if tof_res is not None:
+                tof_results.append(tof_res)
+                logs.append(
+                    f"[TOF] Sample '{sample_name}': "
+                    f"theoretical {tof_res.theoretical_tof_mg_L * 1e6:.1f} ng F/L vs "
+                    f"reported {tof_res.measured_type} {tof_res.measured_mg_L * 1e6:.1f} ng F/L "
+                    f"(coverage {tof_res.coverage_ratio * 100:.1f}%)"
+                )
+
+            sample_results.append(SampleResult(sample_name, m1, m2, s_status, tof_res))
             logs.append(f"[M2] Sample '{sample_name}' → {s_status}")
     else:
         # Keyword-only path
@@ -1351,4 +1514,5 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         data_sources=data_sources,
         variability_ratio=variability_ratio,
         variability_flag=variability_flag,
+        tof_results=tof_results,
     )

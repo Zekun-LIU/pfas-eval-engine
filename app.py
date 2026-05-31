@@ -27,7 +27,16 @@ st.set_page_config(
 )
 
 # Late imports (after page config)
-from engine import EvaluationResult, Module1Result, Module2Result, Module3Result, SampleResult, evaluate
+from engine import (
+    EvaluationResult, Module1Result, Module2Result, Module3Result,
+    SampleResult, TOFAnalysisResult, evaluate,
+    M3_COD_MAX_MG_L, M3_TOC_MAX_MG_L,
+    M3_NITRATE_MANAGEABLE, M3_NITRATE_HIGH,
+    M3_CHLORIDE_CORROSION, M3_FLUORIDE_TOF,
+    M3_HARDNESS_PRECIP, M3_AMMONIA_HIGH,
+    M3_TKN_HIGH, M3_METAL_FLAG_PPM,
+    TOF_COVERAGE_THRESHOLD,
+)
 from parser import ParsedData, parse_all
 from utils import (
     CATEGORY_LABELS,
@@ -234,6 +243,115 @@ def _render_flag(flag) -> None:
     )
 
 
+def _param_traffic_light(key: str, value) -> str:
+    """
+    Return a traffic-light emoji for a Module 3 matrix parameter based on engine thresholds.
+    🟢 = OK / within range
+    🟡 = moderate concern / watch
+    🔴 = exceeded / concern
+    ⚪ = no threshold defined for this parameter
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "⚪"
+
+    if key == "COD":
+        return "🟢" if v <= M3_COD_MAX_MG_L else "🔴"
+    if key in ("TOC", "DOC"):
+        return "🟢" if v <= M3_TOC_MAX_MG_L else "🔴"
+    if key in ("nitrate", "NO2"):
+        if v < M3_NITRATE_MANAGEABLE:
+            return "🟢"
+        if v <= M3_NITRATE_HIGH:
+            return "🟡"
+        return "🔴"
+    if key == "chloride":
+        return "🟢" if v <= M3_CHLORIDE_CORROSION else "🔴"
+    if key == "fluoride":
+        return "🟢" if v <= M3_FLUORIDE_TOF else "🔴"
+    if key == "hardness":
+        return "🟢" if v <= M3_HARDNESS_PRECIP else "🟡"
+    if key == "ammonia":
+        return "🟢" if v <= M3_AMMONIA_HIGH else "🟡"
+    if key == "TKN":
+        return "🟢" if v <= M3_TKN_HIGH else "🟡"
+    if key in ("iron", "manganese", "copper", "zinc", "aluminum",
+               "nickel", "chromium", "lead"):
+        return "🟢" if v <= M3_METAL_FLAG_PPM else "🟡"
+    # pH, turbidity, TSS, BOD, TP, TN, conductivity, TDS, sulfate, temperature,
+    # UV254, UVT254, phosphate, arsenic, cadmium, mercury, silver, …
+    return "⚪"
+
+
+def _render_tof_analysis(tof: "TOFAnalysisResult") -> None:
+    """Render the TOF/AOF theoretical coverage analysis for a single sample."""
+    import pandas as pd
+
+    st.markdown(
+        '<div class="section-header">TOF Coverage Analysis — Theoretical vs Reported Organic Fluorine</div>',
+        unsafe_allow_html=True,
+    )
+
+    ratio_pct = tof.coverage_ratio * 100
+    status_icon = "⚠️" if tof.unknown_pfas_flag else "✅"
+    status_text = (
+        f"**{status_icon} Theoretical TOF covers {ratio_pct:.1f}% of reported {tof.measured_type}**"
+    )
+    st.markdown(status_text)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="val">{format_conc_auto(tof.theoretical_tof_mg_L)}</div>'
+            f'<div class="lbl">Theoretical TOF (as F)</div></div>',
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="val">{format_conc_auto(tof.measured_mg_L)}</div>'
+            f'<div class="lbl">Reported {tof.measured_type} (as F)</div></div>',
+            unsafe_allow_html=True,
+        )
+    with c3:
+        pct_color = "#EF4444" if tof.unknown_pfas_flag else "#22C55E"
+        st.markdown(
+            f'<div class="metric-card">'
+            f'<div class="val" style="color:{pct_color}">{ratio_pct:.1f}%</div>'
+            f'<div class="lbl">Coverage ratio</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # Species contributions table
+    if tof.species_contributions:
+        contrib_rows = [
+            {
+                "Species": name,
+                "Concentration": format_conc_auto(conc),
+                "F Contribution": format_conc_auto(f_c) + " as F",
+                "% of Theoretical TOF": (
+                    f"{f_c / tof.theoretical_tof_mg_L * 100:.1f}%"
+                    if tof.theoretical_tof_mg_L > 0 else "—"
+                ),
+            }
+            for name, conc, f_c in tof.species_contributions
+        ]
+        st.dataframe(pd.DataFrame(contrib_rows), use_container_width=True, hide_index=True)
+
+    for f in tof.flags:
+        _render_flag(f)
+
+    if tof.unknown_pfas_flag:
+        st.caption(
+            f"Threshold: theoretical TOF must be ≥ {TOF_COVERAGE_THRESHOLD * 100:.0f}% "
+            f"of reported {tof.measured_type} to clear the unknown-PFAS flag."
+        )
+
+
 def _render_sample_section(
     sr: SampleResult,
     expanded: bool = True,
@@ -370,6 +488,10 @@ def _render_sample_section(
                 for sc in m2.operating_scenarios:
                     st.markdown(f"- {sc}")
 
+        # ── TOF / AOF analysis ────────────────────────────────────────────────
+        if sr.tof_result is not None:
+            _render_tof_analysis(sr.tof_result)
+
 
 def _render_module3(m3: Module3Result) -> None:
     """Render Module 3 water matrix screening results — spec-aligned parameters."""
@@ -378,56 +500,101 @@ def _render_module3(m3: Module3Result) -> None:
     # All recognised matrix parameters (spec required + supplementary)
     _MATRIX_UNITS = {
         "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
-        "nitrate": "mg/L", "NO2": "mg/L",
-        "ammonia": "mg/L", "TKN": "mg/L",
+        "BOD": "mg/L",
+        "nitrate": "mg/L", "NO2": "mg/L", "nitrite": "mg/L",
+        "ammonia": "mg/L", "TKN": "mg/L", "TN": "mg/L",
+        "TP": "mg/L", "phosphate": "mg/L",
         "UV254": "cm⁻¹", "UVT254": "%",
         "chloride": "mg/L", "fluoride": "mg/L",
         "hardness": "mg/L as CaCO₃", "TDS": "mg/L",
-        "sulfate": "mg/L", "pH": "", "turbidity": "NTU",
+        "sulfate": "mg/L", "alkalinity": "mg/L as CaCO₃",
+        "pH": "", "turbidity": "NTU",
         "TSS": "mg/L", "temperature": "°C", "flow_rate": "(raw)",
-        "sample_color": "",
+        "sample_color": "", "conductivity": "mS/cm",
         "iron": "mg/L", "manganese": "mg/L", "copper": "mg/L",
         "zinc": "mg/L", "aluminum": "mg/L", "nickel": "mg/L",
         "chromium": "mg/L", "lead": "mg/L",
+        "arsenic": "mg/L", "cadmium": "mg/L", "mercury": "mg/L",
+        "silver": "mg/L", "barium": "mg/L", "calcium": "mg/L",
+        "magnesium": "mg/L", "boron": "mg/L", "selenium": "mg/L",
     }
     _MATRIX_NICE = {
-        "COD": "COD (Chemical Oxygen Demand) ★",
-        "TOC": "TOC (Total Organic Carbon) ★",
-        "DOC": "DOC (Dissolved Organic Carbon)",
-        "nitrate": "Nitrate NO₃⁻ ★",
-        "NO2": "Nitrite NO₂⁻ ★",
-        "ammonia": "Ammonia / Ammonium (NH₃/NH₄⁺)",
-        "TKN": "TKN (Total Kjeldahl Nitrogen)",
-        "UV254": "UV₂₅₄ Absorbance ☆",
-        "UVT254": "UV₂₅₄ Transmittance ☆",
-        "chloride": "Chloride Cl⁻",
-        "fluoride": "Fluoride F⁻",
-        "hardness": "Total Hardness",
-        "TDS": "TDS", "sulfate": "Sulfate SO₄²⁻",
-        "pH": "pH", "turbidity": "Turbidity",
-        "TSS": "TSS", "temperature": "Temperature",
-        "flow_rate": "Flow Rate", "sample_color": "Sample Color",
-        "iron": "Iron (Fe)", "manganese": "Manganese (Mn)",
-        "copper": "Copper (Cu)", "zinc": "Zinc (Zn)",
-        "aluminum": "Aluminum (Al)", "nickel": "Nickel (Ni)",
-        "chromium": "Chromium (Cr)", "lead": "Lead (Pb)",
+        "COD":         "COD (Chemical Oxygen Demand) ★",
+        "TOC":         "TOC (Total Organic Carbon) ★",
+        "DOC":         "DOC (Dissolved Organic Carbon)",
+        "BOD":         "BOD₅ (Biological Oxygen Demand)",
+        "nitrate":     "Nitrate NO₃⁻ ★",
+        "NO2":         "Nitrite NO₂⁻ ★",
+        "nitrite":     "Nitrite NO₂⁻ ★",       # fallback key
+        "ammonia":     "Ammonia / Ammonium (NH₃/NH₄⁺)",
+        "TKN":         "TKN (Total Kjeldahl Nitrogen)",
+        "TN":          "Total Nitrogen",
+        "TP":          "Total Phosphorus",
+        "phosphate":   "Phosphate (PO₄³⁻)",
+        "UV254":       "UV₂₅₄ Absorbance ☆",
+        "UVT254":      "UV₂₅₄ Transmittance ☆",
+        "chloride":    "Chloride Cl⁻",
+        "fluoride":    "Fluoride F⁻",
+        "hardness":    "Total Hardness",
+        "alkalinity":  "Total Alkalinity",
+        "TDS":         "TDS (Total Dissolved Solids)",
+        "sulfate":     "Sulfate SO₄²⁻",
+        "pH":          "pH",
+        "turbidity":   "Turbidity",
+        "TSS":         "TSS (Total Suspended Solids)",
+        "temperature": "Temperature",
+        "conductivity":"Conductivity",
+        "flow_rate":   "Flow Rate",
+        "sample_color":"Sample Color",
+        "iron":        "Iron (Fe)",
+        "manganese":   "Manganese (Mn)",
+        "copper":      "Copper (Cu)",
+        "zinc":        "Zinc (Zn)",
+        "aluminum":    "Aluminum (Al)",
+        "nickel":      "Nickel (Ni)",
+        "chromium":    "Chromium (Cr)",
+        "lead":        "Lead (Pb)",
+        "arsenic":     "Arsenic (As)",
+        "cadmium":     "Cadmium (Cd)",
+        "mercury":     "Mercury (Hg)",
+        "silver":      "Silver (Ag)",
+        "barium":      "Barium (Ba)",
+        "calcium":     "Calcium (Ca)",
+        "magnesium":   "Magnesium (Mg)",
+        "boron":       "Boron (B)",
+        "selenium":    "Selenium (Se)",
     }
 
     st.markdown('<div class="section-header">Module 3 — Water Matrix Screening</div>',
                 unsafe_allow_html=True)
 
-    st.caption("★ Required by spec  ☆ Recommended by spec")
+    st.caption(
+        "★ Required by spec  ☆ Recommended by spec  "
+        "| Traffic light: 🟢 OK · 🟡 Watch · 🔴 Concern · ⚪ No threshold"
+    )
 
     if m3.detected_params:
         param_rows = [
             {
+                "Status": _param_traffic_light(k, v),
                 "Parameter": _MATRIX_NICE.get(k, k),
-                "Value": str(v),
+                "Value": (
+                    f"{v:.4g}" if isinstance(v, float) and v == v else str(v)
+                ),
                 "Unit": _MATRIX_UNITS.get(k, ""),
             }
             for k, v in m3.detected_params.items()
         ]
-        st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
+        st.dataframe(
+            pd.DataFrame(param_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Status": st.column_config.TextColumn(width="small"),
+                "Value":  st.column_config.TextColumn(width="small"),
+                "Unit":   st.column_config.TextColumn(width="small"),
+            },
+        )
     else:
         st.info(
             "No water matrix parameters detected. "
@@ -504,6 +671,16 @@ def _build_text_report(result: EvaluationResult) -> str:
         lines += ["", "  TREATMENT IMPLICATIONS:"]
         lines += [f"    - {item}" for item in m2.treatment_implications]
         lines.append("")
+        if sr.tof_result is not None:
+            t = sr.tof_result
+            lines += [
+                "TOF COVERAGE ANALYSIS",
+                f"  Theoretical TOF (from identified PFAS): {format_conc_auto(t.theoretical_tof_mg_L)} as F",
+                f"  Reported {t.measured_type}: {format_conc_auto(t.measured_mg_L)} as F",
+                f"  Coverage ratio: {t.coverage_ratio * 100:.1f}%",
+                f"  Unknown PFAS flag: {'YES — significant unknown PFAS likely present' if t.unknown_pfas_flag else 'No'}",
+                "",
+            ]
 
     lines += [
         "-" * 70,

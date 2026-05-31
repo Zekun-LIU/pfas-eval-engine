@@ -248,6 +248,102 @@ PFESA_2PLUS2_EXCLUDES: frozenset = frozenset(["F-53B", "73606-19-6"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TOF (TOTAL ORGANIC FLUORINE) CALCULATION DATABASE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# TOF = Total Organic Fluorine, measured as mass of F per volume (mg F/L).
+# Theoretical TOF from a PFAS compound:
+#   F_contribution (mg F/L) = concentration (mg/L) × (nF × 18.998) / MW
+# where nF = number of F atoms, MW = molecular weight (g/mol).
+#
+# Values: (nF, MW_g_mol)  — molecular weight rounded to 0.1 g/mol.
+# Sources: PubChem / NIST for each canonical species.
+_PFAS_TOF_DATA: Dict[str, tuple] = {
+    # ── Ultra-short chain ──────────────────────────────────────────────────────
+    "TFA":        (3,   114.0),   # CF3COOH
+    "TFMS":       (3,   150.1),   # CF3SO3H
+    "TFSI":       (6,   281.2),   # (CF3SO2)2NH
+    "PFPrA":      (5,   164.0),   # C2F5COOH
+    "PFPrS":      (7,   250.1),   # C3F7SO3H
+    # ── Short-chain carboxylates ───────────────────────────────────────────────
+    "PFBA":       (7,   214.0),   # C3F7COOH
+    "PFPeA":      (9,   264.1),   # C4F9COOH
+    "PFHxA":      (11,  314.1),   # C5F11COOH
+    "PFHpA":      (13,  364.1),   # C6F13COOH
+    # ── Long-chain carboxylates ────────────────────────────────────────────────
+    "PFOA":       (15,  414.1),   # C7F15COOH
+    "PFNA":       (17,  464.1),   # C8F17COOH
+    "PFDA":       (19,  514.1),   # C9F19COOH
+    "PFUnDA":     (21,  564.1),   # C10F21COOH
+    "PFDoDA":     (23,  614.1),   # C11F23COOH
+    "PFTrDA":     (25,  664.1),   # C12F25COOH
+    "PFTeDA":     (27,  714.2),   # C13F27COOH
+    # ── Short-chain sulfonates ─────────────────────────────────────────────────
+    "PFBS":       (9,   300.1),   # C4F9SO3H
+    "PFPeS":      (11,  350.1),   # C5F11SO3H
+    # ── Long-chain sulfonates ──────────────────────────────────────────────────
+    "PFHxS":      (13,  400.1),   # C6F13SO3H
+    "PFHpS":      (15,  450.1),   # C7F15SO3H
+    "PFOS":       (17,  500.1),   # C8F17SO3H
+    "PFDS":       (21,  600.1),   # C10F21SO3H
+    # ── Precursors / sulfonamides ──────────────────────────────────────────────
+    "PFOSA":      (17,  499.1),   # C8F17SO2NH2
+    "PFOSF":      (17,  502.1),   # C8F17SO2F
+    "N-MeFOSA":   (17,  513.2),   # C9H2F17NO2S
+    "N-EtFOSA":   (17,  527.2),   # C10H4F17NO2S
+    "N-MeFOSE":   (17,  557.2),   # C11H4F17NO3S
+    "N-EtFOSE":   (17,  571.2),   # C12H6F17NO3S
+    # ── Fluorotelomer alcohols (FTOH) ─────────────────────────────────────────
+    # n:2 FTOH = CnF(2n+1)(CH2)2OH → nF = 2n+1
+    "6:2 FTOH":   (13,  364.1),   # C8H5F13O
+    "8:2 FTOH":   (17,  464.1),   # C10H5F17O
+    "10:2 FTOH":  (21,  564.1),   # C12H5F21O
+    # ── Fluorotelomer sulfonates (FTS / FTSA) ─────────────────────────────────
+    # n:2 FTS = CnF(2n+1)(CH2)2SO3H → nF = 2n+1
+    "2:2 FTS":    (5,   228.1),   # C4H4F5SO3H
+    "4:2 FTS":    (9,   328.1),   # C6H4F9SO3H
+    "6:2 FTS":    (13,  428.1),   # C8H4F13SO3H
+    "8:2 FTS":    (17,  528.1),   # C10H4F17SO3H
+    "10:2 FTS":   (21,  628.1),   # C12H4F21SO3H
+    "2:2 FTSA":   (5,   228.1),
+    "4:2 FTSA":   (9,   328.1),
+    "6:2 FTSA":   (13,  428.1),
+    "8:2 FTSA":   (17,  528.1),
+    # ── Emerging / ether-linked ────────────────────────────────────────────────
+    "HFPO-DA":    (11,  330.0),   # C6HF11O3  (GenX)
+    "GenX":       (11,  330.0),
+    "ADONA":      (11,  402.1),   # C9H5F11O5
+    "F-53B":      (13,  570.4),   # chloro-PFESA (approximate)
+    "2+2 PFESA":  (9,   316.1),   # C4HF9O4S
+    "4+2 PFESA":  (13,  416.1),   # C6HF13O4S
+    "6+2 PFESA":  (17,  516.1),   # C8HF17O4S
+    "PFMPA":      (7,   280.1),   # C4HF7O3
+    "PFMBA":      (9,   330.1),   # C5HF9O3
+}
+
+# Atomic mass of fluorine (g/mol)
+_F_ATOMIC_MASS: float = 18.998
+
+
+def get_pfas_f_fraction(name: str) -> Optional[float]:
+    """
+    Return the mass fraction of fluorine in the named PFAS compound: (nF × 18.998) / MW.
+
+    Used to compute the theoretical contribution of a quantified PFAS species
+    to Total Organic Fluorine (TOF):
+        F_contribution (mg F/L) = concentration (mg/L) × get_pfas_f_fraction(name)
+
+    Returns None if the compound is not in the TOF database (fraction unknown).
+    """
+    canonical = normalize_pfas_name(name)
+    data = _PFAS_TOF_DATA.get(canonical)
+    if data is None:
+        return None
+    nF, mw = data
+    return (nF * _F_ATOMIC_MASS) / mw
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # UNIT CONVERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 

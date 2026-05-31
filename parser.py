@@ -40,6 +40,11 @@ class ParsedData:
     # {sample_name: [canonical_name, ...]}
     nd_species: Dict[str, List[str]] = field(default_factory=dict)
 
+    # Bulk organofluorine measurements captured from PFAS sheet (excluded from
+    # species composition but used for theoretical TOF comparison).
+    # {sample_name: {"AOF": value_mg_L_as_F, "TOF": value_mg_L_as_F}}
+    aof_tof_data: Dict[str, Dict[str, float]] = field(default_factory=dict)
+
     # Original unit detected in the data source
     detected_unit: str = "ng/L"
 
@@ -77,6 +82,10 @@ class ParsedData:
                 if sp not in self.nd_species[sample]:
                     self.nd_species[sample].append(sp)
         self.matrix_params.update(other.matrix_params)
+        for sample, bulk in other.aof_tof_data.items():
+            if sample not in self.aof_tof_data:
+                self.aof_tof_data[sample] = {}
+            self.aof_tof_data[sample].update(bulk)
         self.keyword_species += [k for k in other.keyword_species if k not in self.keyword_species]
         self.logs += other.logs
         self.warnings += other.warnings
@@ -200,6 +209,7 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     result.nd_species = best_result.nd_species
     result.detected_unit = best_result.detected_unit
     result.warnings += best_result.warnings
+    result.aof_tof_data = best_result.aof_tof_data
 
     # ── Extract matrix parameters from all sheets ─────────────────────────────
     matrix_params = _extract_matrix_from_excel(sheets, logs)
@@ -323,6 +333,35 @@ def _parse_excel_sheet(
 
         # Skip known total/sum rows and bulk sum parameters (not individual species)
         _analyte_lower = analyte_raw.lower().strip()
+
+        # ── Capture AOF / TOF before skipping (used for theoretical TOF comparison) ──
+        # These are bulk organofluorine measures — NOT individual PFAS species.
+        # We exclude them from composition to avoid distortion, but store the
+        # numeric values so the engine can compare theoretical TOF vs measured AOF/TOF.
+        _AOF_MARKERS = frozenset({
+            "aof", "total aof", "aof (ng/l)", "aof (µg/l)",
+            "adsorbable organic fluorine",
+        })
+        _TOF_MARKERS = frozenset({
+            "tof", "total organic fluorine", "total fluorine",
+            "total oxidizable fluorine",
+        })
+        if _analyte_lower in _AOF_MARKERS or _analyte_lower in _TOF_MARKERS:
+            bulk_key = "AOF" if _analyte_lower in _AOF_MARKERS else "TOF"
+            for ci, sample_name in enumerate(sample_names):
+                raw_val = row.iloc[ci + 1] if (ci + 1) < len(row) else None
+                val = parse_numeric_value(raw_val)
+                if val is not None:
+                    val_mg_L = convert_to_mg_L(val, unit)
+                    if val_mg_L is not None:
+                        if sample_name not in result.aof_tof_data:
+                            result.aof_tof_data[sample_name] = {}
+                        result.aof_tof_data[sample_name][bulk_key] = val_mg_L
+            logs.append(
+                f"[Excel] Row {ri + 1}: captured {bulk_key} ({analyte_raw!r}) for TOF analysis"
+            )
+            continue  # Skip from PFAS composition
+
         if _analyte_lower in (
             "total", "sum pfas", "total pfas", "pfas sum",
             "sum", "total pfas (calculated)", "σ pfas",
@@ -337,6 +376,9 @@ def _parse_excel_sheet(
             "extractable organic fluorine", "eof",
             "top assay", "top",
             "sum parameter", "sum parameters",
+            # TOF / Total Organic Fluorine — bulk measure, not individual species
+            "tof", "total organic fluorine", "total fluorine",
+            "total oxidizable fluorine",
         ):
             logs.append(f"[Excel] Row {ri + 1}: skipping sum/bulk parameter: {analyte_raw!r}")
             continue
@@ -473,7 +515,7 @@ _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
         "nitraat",                               # Dutch
         "nitrato",                               # Spanish/Italian/Portuguese
     ],
-    "nitrite": [
+    "NO2": [
         "no2", "nitrite", "nitrites", "no2-n",
         "nitrit",                                # German
         "nitriet",                               # Dutch
