@@ -205,22 +205,13 @@ st.markdown(
     .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1400px; }
     section[data-testid="stSidebar"] { display: none; }
 
-    /* ── Header ───────────────────────────────────────────────── */
+    /* ── Header — flat full-width banner ──────────────────────── */
     .pfas-header {
-        background: linear-gradient(135deg, #1D1D1F 0%, #2C2C2E 100%);
+        background: #1D1D1F;
         color: white;
         padding: 28px 36px 22px 36px;
-        border-radius: 18px;
-        margin-bottom: 24px;
-        position: relative;
-        overflow: hidden;
-    }
-    .pfas-header::after {
-        content: '';
-        position: absolute; top: -50px; right: -40px;
-        width: 220px; height: 220px;
-        background: radial-gradient(circle, rgba(0,122,255,0.22) 0%, transparent 70%);
-        pointer-events: none;
+        border-radius: 12px;
+        margin-bottom: 20px;
     }
     .pfas-header h1 {
         margin: 0; font-size: 1.65rem; font-weight: 700;
@@ -270,12 +261,11 @@ st.markdown(
         padding: 12px 18px; font-size: 0.86rem; color: #5C3D00 !important; margin: 10px 0;
     }
 
-    /* ── Metric cards ─────────────────────────────────────────── */
+    /* ── Metric cards — flat ──────────────────────────────────── */
     .metric-card {
         background: #F5F5F7;
         border: 1px solid rgba(0,0,0,0.06);
         border-radius: 14px; padding: 16px 18px; text-align: center;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
     .metric-card .val {
         font-size: 1.45rem; font-weight: 700; color: #1D1D1F;
@@ -286,7 +276,7 @@ st.markdown(
         text-transform: uppercase; letter-spacing: 0.5px;
     }
 
-    /* ── Email box ────────────────────────────────────────────── */
+    /* ── Email box — flat ─────────────────────────────────────── */
     .email-box {
         background: #F5F5F7;
         border: 1px solid rgba(0,0,0,0.07);
@@ -297,7 +287,6 @@ st.markdown(
         white-space: pre-wrap;
         line-height: 1.8;
         color: #1D1D1F !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
     }
 
     /* ── Input panel ──────────────────────────────────────────── */
@@ -310,19 +299,17 @@ st.markdown(
         text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
     }
 
-    /* ── Run button ───────────────────────────────────────────── */
+    /* ── Run button — flat ────────────────────────────────────── */
     div[data-testid="stButton"] > button {
         width: 100%;
         background: #007AFF;
         color: white !important; font-weight: 600; font-size: 0.95rem;
         padding: 13px; border-radius: 10px; border: none;
-        letter-spacing: 0.2px; box-shadow: 0 2px 8px rgba(0,122,255,0.28);
-        transition: all 0.18s ease;
+        letter-spacing: 0.2px;
+        transition: background 0.15s ease;
     }
     div[data-testid="stButton"] > button:hover {
         background: #0066DD;
-        box-shadow: 0 4px 16px rgba(0,122,255,0.4);
-        transform: translateY(-1px);
     }
 
     /* ── Source indicator pills ───────────────────────────────── */
@@ -350,6 +337,46 @@ st.markdown(
 
     /* ── Streamlit dataframe ──────────────────────────────────── */
     [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+    /* ── Hide native Streamlit running indicator ──────────────── */
+    [data-testid="stStatusWidget"] { display: none !important; }
+
+    /* ── Custom loading indicator ─────────────────────────────── */
+    .loading-indicator {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 28px 36px;
+        margin: 8px 0 16px 0;
+        background: #F5F5F7;
+        border: 1px solid #E5E5EA;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #1D1D1F;
+        letter-spacing: 0.1px;
+    }
+    .loading-dot-row {
+        display: flex;
+        gap: 9px;
+    }
+    .loading-dot {
+        width: 9px;
+        height: 9px;
+        background: #007AFF;
+        border-radius: 50%;
+        animation: ld-bounce 1.4s ease-in-out infinite;
+        opacity: 0.35;
+    }
+    .loading-dot:nth-child(1) { animation-delay: 0s; }
+    .loading-dot:nth-child(2) { animation-delay: 0.22s; }
+    .loading-dot:nth-child(3) { animation-delay: 0.44s; }
+    @keyframes ld-bounce {
+        0%, 70%, 100% { transform: translateY(0);   opacity: 0.35; }
+        35%            { transform: translateY(-9px); opacity: 1; }
+    }
 
     </style>
     """,
@@ -1165,95 +1192,96 @@ if "parsed_data" not in st.session_state:
 if "llm_email" not in st.session_state:
     st.session_state.llm_email = None
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# HEADER BANNER
-# ═══════════════════════════════════════════════════════════════════════════════
-
 result: EvaluationResult | None = st.session_state.eval_result
 
-header_left, header_right = st.columns([4, 1])
-with header_left:
-    st.markdown(
-        """
-        <div class="pfas-header">
-            <h1>PFAS Material Evaluation Engine</h1>
-            <div class="subtitle">Claros R&amp;D &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
-            <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
-            <div class="accent-tag">SPEC-ALIGNED v1.0</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+# ═══════════════════════════════════════════════════════════════════════════════
+# HEADER BANNER — full-width
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_status_insert = ""
+if result:
+    _status_insert = (
+        f'<div style="margin-top:12px;">{status_badge_html(result.overall_status)}</div>'
     )
 
-with header_right:
-    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    if result:
-        st.markdown(status_badge_html(result.overall_status), unsafe_allow_html=True)
-    else:
-        st.markdown(
-            '<div style="color:#aaa; font-size:0.85rem; text-align:center; padding-top:18px;">'
-            'Run evaluation<br>to see status</div>',
-            unsafe_allow_html=True,
-        )
-
-st.markdown("---")
-
+st.markdown(
+    f"""
+    <div class="pfas-header">
+        <h1>PFAS Material Evaluation Engine</h1>
+        <div class="subtitle">Claros R&amp;D &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
+        <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
+        <div class="accent-tag">SPEC-ALIGNED v1.0</div>
+        {_status_insert}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MAIN LAYOUT
+# INPUT ROW — horizontal single row
 # ═══════════════════════════════════════════════════════════════════════════════
 
-left_col, right_col = st.columns([1, 2.2], gap="large")
+inp_a, inp_b, inp_c, inp_d = st.columns([1, 1, 1.5, 1.5], gap="medium")
 
-# ─── LEFT PANEL: Inputs ──────────────────────────────────────────────────────
-with left_col:
-    st.markdown('<div class="section-header">Input Materials</div>', unsafe_allow_html=True)
-
+with inp_a:
+    st.markdown('<div class="input-label">Excel PFAS Data</div>', unsafe_allow_html=True)
     excel_file = st.file_uploader(
-        "Excel PFAS Data Table (.xlsx / .xls / .csv)",
+        "Excel",
         type=["xlsx", "xls", "csv"],
         help=(
-            "Expected layout: Column A = PFAS analyte names, "
-            "Columns B+ = sample concentrations. Unit detected automatically."
+            "Column A = PFAS analyte names, Columns B+ = sample concentrations. "
+            "Unit detected automatically."
         ),
+        label_visibility="collapsed",
     )
 
+with inp_b:
+    st.markdown('<div class="input-label">PDF Lab Report</div>', unsafe_allow_html=True)
     pdf_file = st.file_uploader(
-        "PDF Lab Report",
+        "PDF",
         type=["pdf"],
         help="PDF lab report with quantified PFAS results. Table and text-based PDFs supported.",
+        label_visibility="collapsed",
     )
 
-    st.markdown('<div class="section-header">Text Input</div>', unsafe_allow_html=True)
-
+with inp_c:
+    st.markdown('<div class="input-label">Customer Email / Notes</div>', unsafe_allow_html=True)
     email_text = st.text_area(
-        "Customer Email / Notes",
-        height=120,
+        "Notes",
+        height=110,
         placeholder=(
-            "Paste customer email or notes here.\n"
-            "Example: 'Site water has PFOA 250 ng/L, PFOS 180 ng/L, TFA detected...'\n"
-            "Matrix: 'DOC = 4.5 mg/L, sulfate = 180 mg/L, pH = 7.4'"
+            "PFOA 250 ng/L, PFOS 180 ng/L, TFA detected...\n"
+            "DOC = 4.5 mg/L, sulfate = 180 mg/L, pH = 7.4"
         ),
         help="Scanned for PFAS species, inline concentrations, and matrix parameters.",
+        label_visibility="collapsed",
     )
 
+with inp_d:
+    st.markdown('<div class="input-label">Treatment Goals / Context</div>', unsafe_allow_html=True)
     goals_text = st.text_area(
-        "Treatment Goals / Customer Objectives",
-        height=100,
+        "Goals",
+        height=110,
         placeholder=(
-            "Describe treatment targets, regulatory requirements, or project context.\n"
-            "Example: 'Target <70 ng/L combined PFOA+PFOS per EPA MCL.\n"
-            "Drinking water application. Flow 2 MGD. Customer: Veolia France.'"
+            "Target <70 ng/L PFOA+PFOS per EPA MCL.\n"
+            "Drinking water. Flow 2 MGD. Customer: Veolia France."
         ),
         help=(
             "Treatment objectives, regulatory targets, flow rate, site context. "
-            "When AI parsing is enabled, this is merged with any goals found in the uploaded documents."
+            "Merged with any goals found in uploaded documents when AI parsing is on."
         ),
+        label_visibility="collapsed",
     )
 
-    # ── AI-assisted parsing toggle ────────────────────────────────────────────
-    _api_key = _get_api_key()
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTROLS ROW — parsing mode + source pills + run button
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ctrl_a, ctrl_b, ctrl_c = st.columns([2.5, 1, 1], gap="medium")
+
+_api_key = _get_api_key()
+
+with ctrl_a:
     st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
     if _api_key:
         use_llm = st.toggle(
@@ -1268,156 +1296,173 @@ with left_col:
         st.caption("🟢 API key configured — AI parsing available")
     else:
         use_llm = False
-        st.caption(
-            "⚪ AI parsing unavailable — add ANTHROPIC_API_KEY to Streamlit secrets to enable."
-        )
+        st.caption("⚪ AI parsing unavailable — add ANTHROPIC_API_KEY to Streamlit secrets to enable.")
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    run_clicked = st.button("▶  Run Evaluation", type="primary")
-
-    # Input status indicators
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+with ctrl_b:
+    st.markdown('<div class="section-header">Active Sources</div>', unsafe_allow_html=True)
     xl_cls  = "src-on" if excel_file else "src-off"
     pdf_cls = "src-on" if pdf_file else "src-off"
     txt_cls = "src-on" if (email_text.strip() or goals_text.strip()) else "src-off"
     st.markdown(
+        f'<div style="padding-top:4px;">'
         f'<span class="src-pill {xl_cls}">Excel</span>'
         f'<span class="src-pill {pdf_cls}">PDF</span>'
-        f'<span class="src-pill {txt_cls}">Text</span>',
+        f'<span class="src-pill {txt_cls}">Text</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
+with ctrl_c:
+    st.markdown('<div class="section-header">&nbsp;</div>', unsafe_allow_html=True)
+    run_clicked = st.button("▶  Run Evaluation", type="primary")
+
+if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
+    st.info(
+        "Upload an Excel file or PDF, or paste text to begin. At least one source is required.",
+        icon="ℹ️",
+    )
+
+st.markdown("---")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOADING INDICATOR (shown while evaluation runs)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+loading_placeholder = st.empty()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OUTPUT TABS — three-layer
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tab_tech, tab_email, tab_debug = st.tabs([
+    "📋  Technical Output",
+    "✉  Business Email Draft",
+    "🔍  Debug / Logs",
+])
+
+# ─── Handle Run button ───────────────────────────────────────────────────────
+if run_clicked:
     if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
-        st.info(
-            "Upload an Excel file, PDF, or paste text to begin. "
-            "At least one source is required.",
-            icon="ℹ️",
+        with tab_tech:
+            st.warning("Please provide at least one input source before running.")
+    else:
+        # Show custom loading message — replaces the native top-right spinner
+        loading_placeholder.markdown(
+            '<div class="loading-indicator">'
+            '<div class="loading-dot-row">'
+            '<span class="loading-dot"></span>'
+            '<span class="loading-dot"></span>'
+            '<span class="loading-dot"></span>'
+            '</div>'
+            '<div>Reading data and running evaluation engine</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
+        try:
+            excel_bytes = excel_file.read() if excel_file else None
+            pdf_bytes   = pdf_file.read()   if pdf_file   else None
 
-# ─── RIGHT PANEL: Outputs ────────────────────────────────────────────────────
-with right_col:
-    tab_tech, tab_email, tab_debug = st.tabs([
-        "📋  Technical Output",
-        "✉  Business Email Draft",
-        "🔍  Debug / Logs",
-    ])
-
-    # ── Handle Run button ────────────────────────────────────────────────────
-    if run_clicked:
-        if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
-            with tab_tech:
-                st.warning("Please provide at least one input source before running.")
-        else:
-            spinner_msg = (
-                "✨ AI-assisted parsing + evaluation engine running…"
-                if use_llm else
-                "Parsing inputs and running evaluation engine…"
-            )
-            with st.spinner(spinner_msg):
-                try:
-                    excel_bytes = excel_file.read() if excel_file else None
-                    pdf_bytes   = pdf_file.read()   if pdf_file   else None
-
-                    if use_llm and _api_key:
-                        from llm_parser import parse_with_llm
-                        parsed = parse_with_llm(
-                            excel_bytes=excel_bytes,
-                            excel_filename=excel_file.name if excel_file else None,
-                            pdf_bytes=pdf_bytes,
-                            pdf_filename=pdf_file.name if pdf_file else None,
-                            goals_text=goals_text,
-                            api_key=_api_key,
-                        )
-                        # Also parse any pasted text (email_text) with rule-based and merge
-                        if email_text.strip():
-                            from parser import parse_text
-                            text_result = parse_text(email_text, "")
-                            parsed.merge(text_result)
-                            parsed.customer_notes_text = email_text.strip()
-                    else:
-                        parsed = parse_all(
-                            excel_bytes=excel_bytes,
-                            excel_filename=excel_file.name if excel_file else None,
-                            pdf_bytes=pdf_bytes,
-                            pdf_filename=pdf_file.name if pdf_file else None,
-                            email_text=email_text,
-                            goals_text=goals_text,
-                        )
-
-                    eval_result = evaluate(parsed)
-                    st.session_state.eval_result = eval_result
-                    st.session_state.parsed_data = parsed
-
-                    # ── LLM email generation ──────────────────────────────────
-                    if use_llm and _api_key:
-                        try:
-                            llm_email = _generate_llm_email(
-                                eval_result,
-                                parsed.llm_project_context,
-                                _api_key,
-                            )
-                            st.session_state.llm_email = llm_email
-                        except Exception:
-                            st.session_state.llm_email = None
-                    else:
-                        st.session_state.llm_email = None
-
-                    st.rerun()
-                except Exception as exc:
-                    import traceback
-                    st.error(f"Evaluation error: {exc}")
-                    with tab_debug:
-                        st.code(traceback.format_exc(), language="text")
-
-    # Re-bind after potential rerun
-    result = st.session_state.eval_result
-
-    # ── Tab 1: Technical Output ───────────────────────────────────────────────
-    with tab_tech:
-        if result is None:
-            st.markdown(
-                "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-                "Technical evaluation output will appear here after running the engine."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            _render_technical_output(result, st.session_state.parsed_data)
-
-    # ── Tab 2: Email Draft ────────────────────────────────────────────────────
-    with tab_email:
-        if result is None:
-            st.markdown(
-                "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-                "Business email draft will be generated after running the evaluation."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            llm_email = st.session_state.get("llm_email")
-            if llm_email:
-                email_version = st.radio(
-                    "Email version:",
-                    ["✨ AI-Written (Claude Haiku)", "📄 Template-Generated"],
-                    horizontal=True,
-                    label_visibility="collapsed",
+            if use_llm and _api_key:
+                from llm_parser import parse_with_llm
+                parsed = parse_with_llm(
+                    excel_bytes=excel_bytes,
+                    excel_filename=excel_file.name if excel_file else None,
+                    pdf_bytes=pdf_bytes,
+                    pdf_filename=pdf_file.name if pdf_file else None,
+                    goals_text=goals_text,
+                    api_key=_api_key,
                 )
-                chosen_email = llm_email if "AI" in email_version else None
-                _render_email_draft(result, email_text_override=chosen_email)
+                # Also parse any pasted text (email_text) with rule-based and merge
+                if email_text.strip():
+                    from parser import parse_text
+                    text_result = parse_text(email_text, "")
+                    parsed.merge(text_result)
+                    parsed.customer_notes_text = email_text.strip()
             else:
-                _render_email_draft(result)
+                parsed = parse_all(
+                    excel_bytes=excel_bytes,
+                    excel_filename=excel_file.name if excel_file else None,
+                    pdf_bytes=pdf_bytes,
+                    pdf_filename=pdf_file.name if pdf_file else None,
+                    email_text=email_text,
+                    goals_text=goals_text,
+                )
 
-    # ── Tab 3: Debug / Logs ───────────────────────────────────────────────────
-    with tab_debug:
-        if result is None:
-            st.markdown(
-                "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-                "Parser and engine logs will appear here after running."
-                "</div>",
-                unsafe_allow_html=True,
+            eval_result = evaluate(parsed)
+            st.session_state.eval_result = eval_result
+            st.session_state.parsed_data = parsed
+
+            # ── LLM email generation ──────────────────────────────────────────
+            if use_llm and _api_key:
+                try:
+                    llm_email = _generate_llm_email(
+                        eval_result,
+                        parsed.llm_project_context,
+                        _api_key,
+                    )
+                    st.session_state.llm_email = llm_email
+                except Exception:
+                    st.session_state.llm_email = None
+            else:
+                st.session_state.llm_email = None
+
+            st.rerun()
+        except Exception as exc:
+            import traceback
+            loading_placeholder.empty()
+            st.error(f"Evaluation error: {exc}")
+            with tab_debug:
+                st.code(traceback.format_exc(), language="text")
+
+# Re-bind after potential rerun
+result = st.session_state.eval_result
+
+# ── Tab 1: Technical Output ───────────────────────────────────────────────────
+with tab_tech:
+    if result is None:
+        st.markdown(
+            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
+            "Technical evaluation output will appear here after running the engine."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        _render_technical_output(result, st.session_state.parsed_data)
+
+# ── Tab 2: Email Draft ────────────────────────────────────────────────────────
+with tab_email:
+    if result is None:
+        st.markdown(
+            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
+            "Business email draft will be generated after running the evaluation."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        llm_email = st.session_state.get("llm_email")
+        if llm_email:
+            email_version = st.radio(
+                "Email version:",
+                ["✨ AI-Written (Claude Sonnet)", "📄 Template-Generated"],
+                horizontal=True,
+                label_visibility="collapsed",
             )
+            chosen_email = llm_email if "AI" in email_version else None
+            _render_email_draft(result, email_text_override=chosen_email)
         else:
-            _render_debug_logs(result, st.session_state.parsed_data)
+            _render_email_draft(result)
+
+# ── Tab 3: Debug / Logs ───────────────────────────────────────────────────────
+with tab_debug:
+    if result is None:
+        st.markdown(
+            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
+            "Parser and engine logs will appear here after running."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        _render_debug_logs(result, st.session_state.parsed_data)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
