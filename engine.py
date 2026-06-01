@@ -178,6 +178,9 @@ class SampleResult:
     module2: Module2Result
     sample_status: str
     tof_result: Optional[TOFAnalysisResult] = None
+    # Average-case Module 1 (populated when input has avg+max statistical rows
+    # for the same water stream — provides steady-state context alongside worst-case)
+    avg_module1: Optional[Module1Result] = None
 
 
 @dataclass
@@ -1584,6 +1587,17 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     ),
                 ))
 
+            # ── Run Module 1 on the Average data for steady-state context ─────
+            avg_pfas_for_m1: Dict[str, Optional[float]] = dict(orig_avg)
+            if avg_pfas_for_m1 and sample_results:
+                avg_m1 = run_module1(_sc_avg_name, avg_pfas_for_m1)
+                sample_results[0].avg_module1 = avg_m1
+                logs.append(
+                    f"[M1-STAT] Average-case M1 computed: "
+                    f"{len(avg_pfas_for_m1)} analytes, "
+                    f"total {format_conc_auto(avg_m1.total_conc_mg_L)}"
+                )
+
             logs.append(
                 f"[M1-STAT] Avg+Max merged. Max/Avg ratios: {ratio_str}. "
                 f"Avg-fallback analytes: {_sc_avg_only or 'none'}."
@@ -1603,6 +1617,35 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
     logs.append(f"[M3] {len(parsed.matrix_params)} matrix parameters")
     module3 = run_module3(parsed.matrix_params)
     logs.append(f"[M3] Status: {module3.status_contribution}")
+
+    # ── Throughput / flow-rate flag ───────────────────────────────────────────
+    # If the LLM parser extracted a throughput and converted it to GPM, check
+    # whether it exceeds the 100 GPM threshold at which Claros technology
+    # requires additional commercial / engineering review.
+    _throughput_gpm = None
+    try:
+        _throughput_gpm = float(parsed.llm_project_context.get("throughput_gpm") or 0) or None
+    except (TypeError, ValueError):
+        pass
+
+    if _throughput_gpm is not None:
+        logs.append(f"[PROJ] Throughput: {_throughput_gpm:.1f} GPM")
+        if _throughput_gpm > 100:
+            module3.flags.append(FlagItem(
+                severity="commercial",
+                rule_id="PROJ-FLOW",
+                message=(
+                    f"Large-scale application: throughput {_throughput_gpm:.0f} GPM "
+                    f"({parsed.llm_project_context.get('flow_rate_display', '')}) "
+                    "exceeds the 100 GPM threshold."
+                ),
+                detail=(
+                    "Projects above 100 GPM require a full commercial and engineering "
+                    "review: skid configuration, pre-treatment sizing, OPEX modelling, "
+                    "and senior applications-engineering sign-off before quoting."
+                ),
+            ))
+            logs.append(f"[PROJ] COMMERCIAL flag raised — throughput {_throughput_gpm:.0f} GPM > 100 GPM threshold")
 
     # ── Overall status ────────────────────────────────────────────────────────
     overall_status, status_reasons = _determine_status(

@@ -65,7 +65,7 @@ def _get_api_key() -> str | None:
 
 def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key: str) -> str:
     """
-    Use Claude Haiku to write a professional business email from evaluation results.
+    Use Claude Sonnet to write a professional business email from evaluation results.
     Falls back to the template draft if the API call fails.
     """
     try:
@@ -81,6 +81,11 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         lines.append(f"SITE: {project_context['site_name']}")
     if project_context.get("country"):
         lines.append(f"COUNTRY: {project_context['country']}")
+    if project_context.get("throughput_gpm"):
+        lines.append(f"THROUGHPUT: {project_context['throughput_gpm']:.0f} GPM"
+                     + (" ⚠️ LARGE-SCALE (>100 GPM)" if float(project_context['throughput_gpm']) > 100 else ""))
+    if project_context.get("flow_rate_display"):
+        lines.append(f"  ({project_context['flow_rate_display']} as reported)")
 
     # Worst-case sample PFAS profile
     worst = None
@@ -91,63 +96,88 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         )
     if worst and worst.module1.total_conc_mg_L > 0:
         m1 = worst.module1
-        lines.append(f"\nPFAS PROFILE (worst-case sample: {worst.sample_name}):")
+        lines.append(f"\nPFAS PROFILE — WORST CASE ({worst.sample_name}):")
         lines.append(f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}")
-        for s in m1.species[:5]:
+        for s in m1.species[:6]:
             if s.detected:
                 lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)} ({s.percentage:.1f}%)")
         for cat, frac in sorted(m1.category_fractions.items(), key=lambda x: -x[1]):
             if frac > 0.01:
-                lines.append(
-                    f"  Category — {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}"
-                )
+                lines.append(f"  Category — {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}")
+        # TOF coverage
+        if worst.tof_result is not None:
+            tof = worst.tof_result
+            lines.append(
+                f"  TOF Coverage: {tof.coverage_ratio * 100:.1f}% "
+                f"(theoretical {format_conc_auto(tof.theoretical_tof_mg_L)} vs "
+                f"reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)})"
+            )
+            if tof.unknown_pfas_flag:
+                lines.append("  ⚠️ LOW TOF COVERAGE — significant unknown/unidentified PFAS present")
 
-    # Key flags
+        # Average case if available
+        if worst.avg_module1 is not None:
+            avg_m1 = worst.avg_module1
+            lines.append(f"\nPFAS PROFILE — AVERAGE / STEADY-STATE:")
+            lines.append(f"  Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}")
+            for s in avg_m1.species[:4]:
+                if s.detected:
+                    lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)}")
+
+    # Key flags — include all severities for Sonnet to reason over
     lines.append("\nKEY FLAGS:")
     seen: set = set()
     for sr in result.samples:
         for f in sr.module2.flags:
-            if f.severity in ("critical", "commercial", "technical") and f.message not in seen:
+            if f.severity in ("critical", "commercial", "technical", "pathway") and f.message not in seen:
                 lines.append(f"  [{f.severity.upper()}] {f.message}")
                 seen.add(f.message)
     for f in result.module3.flags:
-        if f.severity == "warning" and f.message not in seen:
-            lines.append(f"  [MATRIX] {f.message}")
+        if f.severity in ("warning", "commercial") and f.message not in seen:
+            lines.append(f"  [MATRIX/PROJ] {f.message}")
             seen.add(f.message)
 
-    lines.append(f"\nTREATMENT IMPLICATIONS:")
-    for item in result.treatment_summary[:4]:
+    lines.append("\nTREATMENT IMPLICATIONS:")
+    for item in result.treatment_summary[:5]:
         lines.append(f"  - {item}")
 
     if result.missing_info:
-        lines.append(f"\nMISSING INFORMATION:")
-        for item in result.missing_info[:4]:
+        lines.append("\nMISSING INFORMATION:")
+        for item in result.missing_info[:5]:
             lines.append(f"  - {item}")
 
     summary = "\n".join(lines)
 
     system = (
-        "You are a technical sales engineer at Claros Water Technologies writing an internal "
-        "business email to your team about a PFAS treatment opportunity.\n\n"
-        "Write a professional, concise email (250–350 words) based on the evaluation data below.\n\n"
+        "You are a senior technical sales engineer at Claros Water Technologies writing an "
+        "internal business email to your team about a PFAS treatment opportunity.\n\n"
+        "Write a professional, clear email (280–380 words) grounded in the evaluation data.\n\n"
         "FORMAT:\n"
-        "Subject: PFAS Treatment Feasibility — [brief site/customer descriptor]\n\n"
-        "[Opening: 2 sentences — what opportunity, what overall conclusion]\n\n"
-        "[PFAS Profile: 2-3 sentences covering key species, concentrations, composition category]\n\n"
-        "[Key Technical Findings: 3-5 bullet points — actual flag messages from the evaluation]\n\n"
-        "[Recommendation: one paragraph — PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED + reasoning]\n\n"
-        "[Next Steps: 2-3 action items]\n\n"
+        "Subject: PFAS Treatment Feasibility — [customer/site descriptor + status]\n\n"
+        "[Opening — 2 sentences: opportunity context, overall verdict]\n\n"
+        "[PFAS Profile — 3 sentences: key species with actual concentrations, composition "
+        "category, TOF coverage finding if relevant]\n\n"
+        "[Key Technical Findings — 4-6 bullet points drawn from the evaluation flags]\n\n"
+        "[Scale & Project Context — 1 short paragraph: throughput, any large-scale flag, "
+        "site/country context]\n\n"
+        "[Recommendation — 1 paragraph: PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED "
+        "with specific reasoning]\n\n"
+        "[Next Steps — 3 concrete action items]\n\n"
         "Claros R&D Team | PFAS Evaluation Engine\n\n"
-        "RULES: Use actual species names and concentrations. "
-        "If CRITICAL, make the blocking issue unmissable in the opening. "
-        "Return ONLY the email text — no commentary, no markdown."
+        "RULES:\n"
+        "- Use actual species names and concentrations from the data — never invent numbers.\n"
+        "- If CRITICAL flag exists, lead with it in the opening.\n"
+        "- If TOF coverage is low (<50%), name it as a key risk: unknown PFAS cannot be "
+        "guaranteed to be treated.\n"
+        "- If throughput >100 GPM, call out the large-scale flag explicitly.\n"
+        "- Return ONLY the email text — no markdown fencing, no preamble."
     )
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=1024,
+            model="claude-sonnet-4-5",
+            max_tokens=1500,
             system=system,
             messages=[{"role": "user", "content": f"EVALUATION RESULTS:\n{summary}"}],
         )
@@ -592,14 +622,88 @@ def _render_sample_section(
             else:
                 st.warning("No concentration data for this sample.")
 
-        # ── TOF Coverage Analysis — part of Module 1 composition picture ──────
-        # Shows whether the identified PFAS species account for the bulk organic
-        # fluorine reported (AOF/TOF), revealing unknown PFAS if coverage is low.
+        # ── TOF / AOF Coverage inline summary ────────────────────────────────
+        # Surfaces the key "unknown PFAS" question right in the Profile Summary,
+        # before the detailed TOF section below.
         if sr.tof_result is not None:
-            _render_tof_analysis(sr.tof_result)
+            tof = sr.tof_result
+            cov_pct = tof.coverage_ratio * 100
+            if tof.unknown_pfas_flag:
+                _tof_bg = "#FFF1F2"; _tof_border = "#FF3B30"; _tof_icon = "⚠️"
+                _tof_note = (
+                    f"Only <strong>{cov_pct:.1f}%</strong> of reported "
+                    f"{tof.measured_type} is accounted for by identified species. "
+                    "A significant unknown PFAS fraction is present — "
+                    "treatment efficacy for unidentified species cannot be guaranteed."
+                )
+            else:
+                _tof_bg = "#F0FFF5"; _tof_border = "#34C759"; _tof_icon = "✅"
+                _tof_note = (
+                    f"Identified species account for <strong>{cov_pct:.1f}%</strong> of "
+                    f"reported {tof.measured_type} — good coverage, low unknown-PFAS risk."
+                )
+            st.markdown(
+                f'<div style="background:{_tof_bg}; border:1px solid {_tof_border}; '
+                f'border-radius:10px; padding:10px 16px; margin:8px 0; font-size:0.85rem;">'
+                f'{_tof_icon} <strong>TOF/AOF Coverage:</strong> '
+                f'Theoretical TOF {format_conc_auto(tof.theoretical_tof_mg_L)} as F &nbsp;|&nbsp; '
+                f'Reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)} as F &nbsp;|&nbsp; '
+                f'Coverage {cov_pct:.1f}%<br>'
+                f'<span style="font-size:0.80rem; opacity:0.8;">{_tof_note}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
+        # ── M1 flags (e.g. MAX-UNKNOWN) ───────────────────────────────────────
         for f in m1.flags:
             _render_flag(f)
+
+        # ── Average Case Analysis (steady-state, for stat-summary datasets) ───
+        if getattr(sr, "avg_module1", None) is not None:
+            avg_m1 = sr.avg_module1
+            with st.expander(
+                f"📊  Average / Steady-State PFAS Profile  |  "
+                f"Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}",
+                expanded=False,
+            ):
+                st.caption(
+                    "Steady-state operating concentrations (Average). "
+                    "Equipment is sized on the Maximum (worst-case) above; "
+                    "this view shows the expected day-to-day loading."
+                )
+                if avg_m1.species:
+                    import pandas as _pd
+                    avg_rows = [
+                        {
+                            "Analyte": s.name,
+                            "Full Name": s.full_name,
+                            "Avg Concentration": format_conc_auto(s.conc_mg_L),
+                            "% of Avg Total": f"{s.percentage:.1f}%",
+                            "Category": CATEGORY_LABELS.get(s.category, s.category),
+                        }
+                        for s in avg_m1.species
+                        if s.conc_mg_L > 0
+                    ]
+                    if avg_rows:
+                        st.dataframe(
+                            _pd.DataFrame(avg_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    # Category fractions
+                    if avg_m1.category_fractions:
+                        avg_cat_items = sorted(
+                            avg_m1.category_fractions.items(), key=lambda x: -x[1]
+                        )
+                        avg_cat_cols = st.columns(min(len(avg_cat_items), 4))
+                        for i, (cat, frac) in enumerate(avg_cat_items):
+                            if frac > 0.001:
+                                with avg_cat_cols[i % len(avg_cat_cols)]:
+                                    st.metric(
+                                        label=CATEGORY_LABELS.get(cat, cat).split(" (")[0],
+                                        value=format_pct(frac * 100),
+                                    )
 
         # ── Module 2 ──────────────────────────────────────────────────────────
         st.markdown('<div class="section-header">Module 2 — Species-Based Reactivity Screening</div>',
@@ -881,6 +985,35 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         )
     elif result.variability_ratio is not None:
         st.caption(f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)")
+
+    # ── Project Context (throughput, site, customer) ─────────────────────────
+    if parsed and parsed.llm_project_context:
+        ctx = parsed.llm_project_context
+        ctx_items: list[str] = []
+        if ctx.get("customer_name"):
+            ctx_items.append(f"**Customer:** {ctx['customer_name']}")
+        if ctx.get("site_name"):
+            ctx_items.append(f"**Site:** {ctx['site_name']}")
+        if ctx.get("country"):
+            ctx_items.append(f"**Country:** {ctx['country']}")
+        if ctx.get("flow_rate_display"):
+            gpm = ctx.get("throughput_gpm")
+            gpm_str = f" → **{gpm:.0f} GPM**" if gpm else ""
+            flag_str = " 🔴 >100 GPM — large-scale flag" if (gpm and gpm > 100) else ""
+            ctx_items.append(f"**Throughput:** {ctx['flow_rate_display']}{gpm_str}{flag_str}")
+        elif ctx.get("throughput_gpm"):
+            gpm = ctx["throughput_gpm"]
+            flag_str = " 🔴 >100 GPM — large-scale flag" if gpm > 100 else ""
+            ctx_items.append(f"**Throughput:** {gpm:.0f} GPM{flag_str}")
+        if ctx_items:
+            st.markdown('<div class="section-header">Project Context</div>', unsafe_allow_html=True)
+            st.markdown("  &nbsp;&nbsp;".join(ctx_items))
+            if ctx.get("throughput_gpm") and float(ctx["throughput_gpm"]) > 100:
+                st.warning(
+                    f"⚠️ **Large-scale application** — {ctx['throughput_gpm']:.0f} GPM exceeds the "
+                    "100 GPM threshold. Full commercial & engineering review required before quoting.",
+                    icon=None,
+                )
 
     # ── Missing Information ───────────────────────────────────────────────────
     if result.missing_info:

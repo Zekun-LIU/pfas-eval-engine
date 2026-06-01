@@ -58,6 +58,12 @@ EXTRACTION RULES
    discharge limits, treatment objectives, or project drivers found in the document.
 9. parse_notes: if you are uncertain about any extraction, or had to make an
    assumption, add a clear explanation.
+10. Throughput / flow rate: if the document mentions a treatment capacity, flow rate,
+    water volume processed per unit time, or project scale in any unit
+    (GPM, gal/min, L/min, m³/h, m³/day, m3/d, L/s, MGD …) extract it as
+    flow_rate_value (number) and flow_rate_unit (string) in the project section.
+    French: débit, capacité de traitement, volume traité.
+    German: Durchfluss, Durchsatz, Volumenstrom.
 
 JSON SCHEMA (return a JSON object that matches this structure exactly):
 {
@@ -125,6 +131,26 @@ JSON SCHEMA (return a JSON object that matches this structure exactly):
   "parse_notes": ["list of strings"]
 }
 """
+
+# ── Flow-rate conversion table → GPM ─────────────────────────────────────────
+_FLOW_TO_GPM: Dict[str, float] = {
+    "gpm": 1.0, "gal/min": 1.0, "gallon/min": 1.0, "gallons/min": 1.0,
+    "gpd": 1.0 / 1440,          # gallons/day
+    "mgd": 694.444,              # million gallons/day
+    "l/min": 0.264172, "lpm": 0.264172, "l/m": 0.264172,
+    "l/h": 0.004403, "l/hr": 0.004403,
+    "l/s": 15.8503,
+    "m3/h": 4.40287, "m³/h": 4.40287, "m3/hr": 4.40287,
+    "m3/day": 0.183448, "m³/day": 0.183448, "m3/d": 0.183448, "m³/d": 0.183448,
+    "m3/s": 15850.3, "m³/s": 15850.3,
+}
+
+def _convert_flow_to_gpm(value: float, unit: str) -> Optional[float]:
+    """Convert any flow-rate value to US GPM. Returns None if unit unknown."""
+    key = unit.lower().strip().replace(" ", "").replace("·", "")
+    factor = _FLOW_TO_GPM.get(key)
+    return value * factor if factor is not None else None
+
 
 # Parameters that use their own native unit (not converted to mg/L)
 _NATIVE_UNIT_PARAMS = frozenset({
@@ -392,11 +418,25 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
                     f"[LLM] Unknown unit '{u}' for {llm_key} — stored raw value {v_float}"
                 )
 
-    # Flow rate from project context
-    flow_val = proj.get("flow_rate_value")
+    # ── Flow rate / throughput: convert to GPM and store in project context ──────
+    flow_val  = proj.get("flow_rate_value")
+    flow_unit = (proj.get("flow_rate_unit") or "").strip()
     if flow_val is not None:
         try:
-            result.matrix_params["flow_rate"] = float(flow_val)
+            fv = float(flow_val)
+            gpm = _convert_flow_to_gpm(fv, flow_unit)
+            if gpm is not None:
+                result.llm_project_context["throughput_gpm"] = round(gpm, 2)
+                result.llm_project_context["flow_rate_display"] = f"{fv:g} {flow_unit}"
+                result.llm_parse_notes.append(
+                    f"Throughput extracted: {fv:g} {flow_unit} → {gpm:.1f} GPM"
+                )
+            else:
+                # Unit unknown — store raw for display only
+                result.llm_project_context["flow_rate_display"] = f"{fv:g} {flow_unit} (unit not converted)"
+                result.llm_parse_notes.append(
+                    f"Throughput extracted: {fv:g} {flow_unit} — unit not recognised, GPM conversion skipped"
+                )
         except (ValueError, TypeError):
             pass
 
