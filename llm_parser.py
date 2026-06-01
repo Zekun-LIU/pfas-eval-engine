@@ -65,6 +65,15 @@ EXTRACTION RULES
     French: débit, capacité de traitement, volume traité.
     German: Durchfluss, Durchsatz, Volumenstrom.
 
+COMPACT OUTPUT RULES (critical — output tokens are limited):
+- In pfas_measurements, OMIT "is_nd" when it is false (false is the default).
+- In pfas_measurements, OMIT "is_missing" when it is false (false is the default).
+- In pfas_measurements, OMIT entries where value is null AND is_nd is false AND
+  is_missing is false — i.e. skip analytes that were simply not reported/measured.
+- In samples, OMIT "is_statistical_summary" when false, OMIT "summary_type" when null.
+- Omit null fields at the top level of "project" if all are null.
+These omissions are safe — the parser treats absent fields as their defaults.
+
 JSON SCHEMA (return a JSON object that matches this structure exactly):
 {
   "project": {
@@ -239,8 +248,8 @@ def _excel_to_text(file_bytes: bytes, filename: str) -> str:
             parts.append(" | ".join(row_cells))
 
     text = "\n".join(parts)
-    if len(text) > 28_000:
-        text = text[:28_000] + "\n... [TRUNCATED — document continues]"
+    if len(text) > 40_000:
+        text = text[:40_000] + "\n... [TRUNCATED — document continues]"
     return text
 
 
@@ -262,8 +271,8 @@ def _pdf_to_text(file_bytes: bytes, filename: str) -> str:
                 if t.strip():
                     pages.append(f"[Page {i + 1}]\n{t}")
             full = "\n\n".join(pages)
-            if len(full) > 7000:
-                full = full[:7000] + "\n... [TRUNCATED]"
+            if len(full) > 40_000:
+                full = full[:40_000] + "\n... [TRUNCATED]"
             return full
     except Exception as e:
         return f"[ERROR reading PDF '{filename}': {e}]"
