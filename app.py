@@ -223,14 +223,6 @@ st.markdown(
     .pfas-header .byline {
         font-size: 0.75rem; color: rgba(255,255,255,0.35); margin-top: 4px;
     }
-    .pfas-header .accent-tag {
-        display: inline-block; background: rgba(0,122,255,0.22);
-        color: #60A5FA; border: 1px solid rgba(0,122,255,0.4);
-        border-radius: 6px; font-size: 0.68rem; font-weight: 600;
-        padding: 3px 10px; letter-spacing: 1px; margin-top: 10px;
-        text-transform: uppercase;
-    }
-
     /* ── Section headers ──────────────────────────────────────── */
     .section-header {
         font-size: 0.68rem; font-weight: 600; letter-spacing: 1.5px;
@@ -1198,20 +1190,12 @@ result: EvaluationResult | None = st.session_state.eval_result
 # HEADER BANNER — full-width
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_status_insert = ""
-if result:
-    _status_insert = (
-        f'<div style="margin-top:12px;">{status_badge_html(result.overall_status)}</div>'
-    )
-
 st.markdown(
-    f"""
+    """
     <div class="pfas-header">
         <h1>PFAS Material Evaluation Engine</h1>
         <div class="subtitle">Claros R&amp;D &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
         <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
-        <div class="accent-tag">SPEC-ALIGNED v1.0</div>
-        {_status_insert}
     </div>
     """,
     unsafe_allow_html=True,
