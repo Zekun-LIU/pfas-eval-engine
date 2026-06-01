@@ -1285,11 +1285,12 @@ with ctrl_a:
     st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
     if _api_key:
         use_llm = st.toggle(
-            "✨ AI-Assisted Parsing (Claude Haiku)",
+            "✨ AI-Assisted Parsing (Claude Sonnet)",
             value=True,
             help=(
-                "Use Claude Haiku to read the uploaded documents and extract all data. "
-                "Handles flexible layouts, multilingual labels, and statistical-summary detection. "
+                "Use Claude Sonnet to read the uploaded documents and extract all data. "
+                "Handles flexible layouts, multilingual labels, statistical-summary detection, "
+                "and large CofA files with 50+ analytes. "
                 "Falls back to rule-based parsing automatically if the API call fails."
             ),
         )

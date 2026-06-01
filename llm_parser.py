@@ -167,11 +167,34 @@ _LLM_TO_CANONICAL = {
 # DOCUMENT → TEXT CONVERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _score_sheet_pfas_relevance(df: "pd.DataFrame") -> int:
+    """
+    Return 0-100 relevance score for a sheet based on PFAS-related content.
+    Higher score → prioritise this sheet in the document text budget.
+    """
+    if df is None or df.empty:
+        return 0
+    # Sample up to 300 cells to keep scoring fast
+    flat = df.astype(str).values.flatten()[:300]
+    text = " ".join(flat).lower()
+    pfas_markers = [
+        "pfos", "pfoa", "pfba", "pfca", "pfsa", "pfhxa", "pfna", "pfda",
+        "perfluoro", "fluorotelomer", "determinand", "ng/l", "µg/l", "ug/l",
+        "mg/l", "total fluorine", "organic fluorine", "tof", "aof", "ftsa",
+    ]
+    return min(sum(10 for m in pfas_markers if m in text), 100)
+
+
 def _excel_to_text(file_bytes: bytes, filename: str) -> str:
     """
-    Convert all sheets of an Excel file to a pipe-separated text table.
-    Blank cells appear as "(blank)" so the LLM can distinguish them from ND.
-    Truncates to 7 000 characters to stay comfortably within the context window.
+    Convert Excel sheets to pipe-separated text for LLM parsing.
+
+    Key improvements over v1:
+    - Scores each sheet for PFAS relevance and orders them highest-first
+    - Skips clearly irrelevant sheets (score == 0) to save context budget
+    - Raises the character budget from 7 000 → 28 000 so large CofA files
+      with 50+ analytes × 8+ samples fit without truncation
+    - Blank cells appear as "(blank)" so the LLM can distinguish blank from ND
     """
     try:
         import pandas as pd
@@ -188,12 +211,22 @@ def _excel_to_text(file_bytes: bytes, filename: str) -> str:
     except Exception as e:
         return f"[ERROR reading Excel '{filename}': {e}]"
 
-    parts: List[str] = []
+    # Score and sort: PFAS-relevant sheets first, discard zero-score sheets
+    scored: List[Tuple[int, str, "pd.DataFrame"]] = []
     for sheet_name, df in sheets.items():
         if df is None or df.empty:
             continue
-        parts.append(f"\n=== Sheet: {sheet_name} ===")
-        for ri in range(min(len(df), 120)):
+        score = _score_sheet_pfas_relevance(df)
+        scored.append((score, sheet_name, df))
+
+    scored.sort(key=lambda x: -x[0])  # highest score first
+
+    parts: List[str] = []
+    for score, sheet_name, df in scored:
+        if score == 0:
+            continue  # skip metadata-only / empty sheets
+        parts.append(f"\n=== Sheet: {sheet_name} (relevance: {score}) ===")
+        for ri in range(len(df)):  # include ALL rows — no row cap
             row_cells = []
             for ci in range(len(df.columns)):
                 raw = str(df.iloc[ri, ci]).strip()
@@ -201,14 +234,13 @@ def _excel_to_text(file_bytes: bytes, filename: str) -> str:
                     row_cells.append("(blank)")
                 else:
                     row_cells.append(raw)
-            # Skip entirely blank rows
             if all(c == "(blank)" for c in row_cells):
-                continue
+                continue  # skip entirely blank rows
             parts.append(" | ".join(row_cells))
 
     text = "\n".join(parts)
-    if len(text) > 7000:
-        text = text[:7000] + "\n... [TRUNCATED — document continues]"
+    if len(text) > 28_000:
+        text = text[:28_000] + "\n... [TRUNCATED — document continues]"
     return text
 
 
@@ -241,15 +273,18 @@ def _pdf_to_text(file_bytes: bytes, filename: str) -> str:
 # LLM CALL
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _call_claude_haiku(
+def _call_claude_parser(
     document_text: str,
     goals_text: str,
     api_key: str,
 ) -> Tuple[str, dict]:
     """
-    Send document text to Claude Haiku and parse the returned JSON.
+    Send document text to Claude Sonnet for structured PFAS data extraction.
     Returns (raw_response_text, parsed_dict).
     Raises on API error or JSON parse failure.
+
+    Uses claude-sonnet-4-5 (upgraded from Haiku) with max_tokens=8192 to handle
+    large CofA files with 50+ analytes across 8+ samples without JSON truncation.
     """
     try:
         import anthropic
@@ -262,8 +297,8 @@ def _call_claude_haiku(
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=4096,
+        model="claude-sonnet-4-5",
+        max_tokens=8192,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
@@ -278,11 +313,15 @@ def _call_claude_haiku(
     json_match = re.search(r"\{[\s\S]*\}", clean)
     if not json_match:
         raise ValueError(
-            f"Claude Haiku did not return a JSON object. First 500 chars of response:\n{raw[:500]}"
+            f"Claude Sonnet did not return a JSON object. First 500 chars of response:\n{raw[:500]}"
         )
 
     data = json.loads(json_match.group())
     return raw, data
+
+
+# Keep legacy name as alias so any external callers are unaffected
+_call_claude_haiku = _call_claude_parser
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -488,13 +527,13 @@ def parse_with_llm(
         return ParsedData()
 
     try:
-        raw_response, parsed_json = _call_claude_haiku(document_text, goals_text, api_key)
+        raw_response, parsed_json = _call_claude_parser(document_text, goals_text, api_key)
         result = parse_from_llm_json(parsed_json, goals_text)
         result.has_excel = has_excel
         result.has_pdf = has_pdf
         result.has_text = bool(goals_text.strip())
         result.llm_raw_response = raw_response
-        result.logs.insert(0, "[LLM] ✨ Enhanced Data-Reading active — Claude Haiku pre-parser")
+        result.logs.insert(0, "[LLM] ✨ Enhanced Data-Reading active — Claude Sonnet pre-parser")
         return result
 
     except Exception as exc:
