@@ -199,6 +199,7 @@ st.markdown(
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         background-color: #FFFFFF;
         color: #1D1D1F;
+        line-height: 1.65;
     }
 
     /* ── Page chrome ──────────────────────────────────────────── */
@@ -209,9 +210,9 @@ st.markdown(
     .pfas-header {
         background: #1D1D1F;
         color: white;
-        padding: 28px 36px 22px 36px;
+        padding: 30px 36px 24px 36px;
         border-radius: 12px;
-        margin-bottom: 20px;
+        margin-bottom: 24px;
     }
     .pfas-header h1 {
         margin: 0; font-size: 1.65rem; font-weight: 700;
@@ -223,29 +224,32 @@ st.markdown(
     .pfas-header .byline {
         font-size: 0.75rem; color: rgba(255,255,255,0.35); margin-top: 4px;
     }
+
     /* ── Section headers ──────────────────────────────────────── */
     .section-header {
-        font-size: 0.68rem; font-weight: 600; letter-spacing: 1.5px;
+        font-size: 0.72rem; font-weight: 600; letter-spacing: 1.8px;
         text-transform: uppercase; color: #6E6E73;
-        margin: 22px 0 8px 0;
+        margin: 28px 0 10px 0;
+        padding-bottom: 7px;
+        border-bottom: 1px solid #F0F0F2;
     }
 
     /* ── Flag rows ────────────────────────────────────────────── */
     .flag-row {
-        padding: 12px 16px; border-radius: 10px;
-        margin-bottom: 8px; font-size: 0.86rem; line-height: 1.6;
+        padding: 13px 18px; border-radius: 10px;
+        margin-bottom: 10px; font-size: 0.86rem; line-height: 1.65;
         color: #1D1D1F !important;
     }
-    .flag-critical        { background: #FFF1F2; border-left: 3px solid #FF3B30; }
-    .flag-warning         { background: #FFFBEB; border-left: 3px solid #FF9500; }
-    .flag-info            { background: #F0F5FF; border-left: 3px solid #007AFF; }
-    .flag-ok              { background: #F0FFF5; border-left: 3px solid #34C759; }
-    .flag-commercial      { background: #F5F0FF; border-left: 3px solid #AF52DE; }
-    .flag-technical       { background: #FFF8F0; border-left: 3px solid #FF6B00; }
-    .flag-pathway         { background: #F0FFF9; border-left: 3px solid #30D158; }
-    .flag-special_handling{ background: #F8F8F9; border-left: 3px solid #8E8E93; }
+    .flag-critical        { background: #FFF1F2; border-left: 4px solid #FF3B30; }
+    .flag-warning         { background: #FFFBEB; border-left: 4px solid #FF9500; }
+    .flag-info            { background: #F0F5FF; border-left: 4px solid #007AFF; }
+    .flag-ok              { background: #F0FFF5; border-left: 4px solid #34C759; }
+    .flag-commercial      { background: #F5F0FF; border-left: 4px solid #AF52DE; }
+    .flag-technical       { background: #FFF8F0; border-left: 4px solid #FF6B00; }
+    .flag-pathway         { background: #F0FFF9; border-left: 4px solid #30D158; }
+    .flag-special_handling{ background: #F8F8F9; border-left: 4px solid #8E8E93; }
     .flag-row strong      { color: #1D1D1F !important; }
-    .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 5px; font-style: italic; }
+    .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 6px; font-style: italic; line-height: 1.55; }
 
     /* ── Variability banner ───────────────────────────────────── */
     .variability-banner {
@@ -253,19 +257,24 @@ st.markdown(
         padding: 12px 18px; font-size: 0.86rem; color: #5C3D00 !important; margin: 10px 0;
     }
 
-    /* ── Metric cards — flat ──────────────────────────────────── */
+    /* ── Metric cards — flat with hover ──────────────────────── */
     .metric-card {
         background: #F5F5F7;
         border: 1px solid rgba(0,0,0,0.06);
-        border-radius: 14px; padding: 16px 18px; text-align: center;
+        border-radius: 14px; padding: 18px 18px; text-align: center;
+        transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .metric-card:hover {
+        border-color: rgba(0,122,255,0.22);
+        background: #EEF4FF;
     }
     .metric-card .val {
         font-size: 1.45rem; font-weight: 700; color: #1D1D1F;
         letter-spacing: -0.5px;
     }
     .metric-card .lbl {
-        font-size: 0.68rem; color: #6E6E73; margin-top: 4px;
-        text-transform: uppercase; letter-spacing: 0.5px;
+        font-size: 0.68rem; color: #6E6E73; margin-top: 5px;
+        text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.4;
     }
 
     /* ── Email box — flat ─────────────────────────────────────── */
@@ -277,7 +286,7 @@ st.markdown(
         font-family: 'Inter', sans-serif;
         font-size: 0.88rem;
         white-space: pre-wrap;
-        line-height: 1.8;
+        line-height: 1.85;
         color: #1D1D1F !important;
     }
 
@@ -287,7 +296,7 @@ st.markdown(
         border-radius: 12px; padding: 16px 18px; margin-bottom: 12px;
     }
     .input-label {
-        font-size: 0.68rem; font-weight: 600; letter-spacing: 0.8px;
+        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.6px;
         text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
     }
 
@@ -299,9 +308,24 @@ st.markdown(
         padding: 13px; border-radius: 10px; border: none;
         letter-spacing: 0.2px;
         transition: background 0.15s ease;
+        cursor: pointer;
     }
-    div[data-testid="stButton"] > button:hover {
-        background: #0066DD;
+    div[data-testid="stButton"] > button:hover { background: #0066DD; }
+
+    /* ── Download buttons — ghost style ──────────────────────── */
+    [data-testid="stDownloadButton"] > button {
+        background: transparent !important;
+        border: 1px solid #D1D1D6 !important;
+        color: #1D1D1F !important;
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+        border-radius: 8px !important;
+        transition: background 0.15s ease, border-color 0.15s ease !important;
+        cursor: pointer !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        background: #F5F5F7 !important;
+        border-color: #8E8E93 !important;
     }
 
     /* ── Source indicator pills ───────────────────────────────── */
@@ -316,13 +340,25 @@ st.markdown(
     /* ── Footer ───────────────────────────────────────────────── */
     .pfas-footer {
         text-align: center; font-size: 0.70rem; color: #8E8E93;
-        margin-top: 40px; padding-top: 14px;
+        margin-top: 48px; padding-top: 16px;
         border-top: 1px solid #E5E5EA;
         letter-spacing: 0.3px;
     }
 
     /* ── Streamlit tab overrides ──────────────────────────────── */
-    button[data-baseweb="tab"] { font-size: 0.86rem !important; font-weight: 500 !important; }
+    button[data-baseweb="tab"] {
+        font-size: 0.88rem !important; font-weight: 500 !important;
+        padding: 10px 4px !important; margin-right: 24px !important;
+        color: #6E6E73 !important;
+        border-bottom: 2px solid transparent !important;
+        transition: color 0.15s ease !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        font-weight: 600 !important;
+        color: #1D1D1F !important;
+        border-bottom: 2px solid #007AFF !important;
+    }
+    button[data-baseweb="tab"]:hover { color: #1D1D1F !important; }
 
     /* ── Streamlit divider ────────────────────────────────────── */
     hr { border-color: #E5E5EA !important; }
@@ -330,37 +366,39 @@ st.markdown(
     /* ── Streamlit dataframe ──────────────────────────────────── */
     [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
 
+    /* ── Streamlit expander ───────────────────────────────────── */
+    [data-testid="stExpander"] {
+        border: 1px solid #E5E5EA !important;
+        border-radius: 12px !important;
+        margin-bottom: 10px;
+    }
+
+    /* ── Streamlit alerts ─────────────────────────────────────── */
+    [data-testid="stAlert"] { border-radius: 10px !important; }
+
+    /* ── Empty state placeholder ──────────────────────────────── */
+    .empty-state {
+        color: #8E8E93; padding: 64px 0 48px 0;
+        text-align: center; font-size: 0.92rem; line-height: 1.6;
+    }
+    .empty-state-icon { font-size: 2.2rem; margin-bottom: 14px; opacity: 0.45; display: block; }
+
     /* ── Hide native Streamlit running indicator ──────────────── */
     [data-testid="stStatusWidget"] { display: none !important; }
 
     /* ── Custom loading indicator ─────────────────────────────── */
     .loading-indicator {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 14px;
-        padding: 28px 36px;
-        margin: 8px 0 16px 0;
-        background: #F5F5F7;
-        border: 1px solid #E5E5EA;
-        border-radius: 12px;
-        font-size: 0.95rem;
-        font-weight: 500;
-        color: #1D1D1F;
-        letter-spacing: 0.1px;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 14px; padding: 32px 36px; margin: 8px 0 16px 0;
+        background: #F5F5F7; border: 1px solid #E5E5EA;
+        border-radius: 12px; font-size: 0.95rem; font-weight: 500;
+        color: #1D1D1F; letter-spacing: 0.1px;
     }
-    .loading-dot-row {
-        display: flex;
-        gap: 9px;
-    }
+    .loading-dot-row { display: flex; gap: 9px; }
     .loading-dot {
-        width: 9px;
-        height: 9px;
-        background: #007AFF;
-        border-radius: 50%;
-        animation: ld-bounce 1.4s ease-in-out infinite;
-        opacity: 0.35;
+        width: 9px; height: 9px; background: #007AFF;
+        border-radius: 50%; animation: ld-bounce 1.4s ease-in-out infinite; opacity: 0.35;
     }
     .loading-dot:nth-child(1) { animation-delay: 0s; }
     .loading-dot:nth-child(2) { animation-delay: 0.22s; }
@@ -368,6 +406,9 @@ st.markdown(
     @keyframes ld-bounce {
         0%, 70%, 100% { transform: translateY(0);   opacity: 0.35; }
         35%            { transform: translateY(-9px); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .loading-dot { animation: none !important; opacity: 0.7; }
     }
 
     </style>
@@ -1406,9 +1447,10 @@ result = st.session_state.eval_result
 with tab_tech:
     if result is None:
         st.markdown(
-            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-            "Technical evaluation output will appear here after running the engine."
-            "</div>",
+            '<div class="empty-state">'
+            '<span class="empty-state-icon">⚗</span>'
+            'Technical evaluation output will appear here after running the engine.'
+            '</div>',
             unsafe_allow_html=True,
         )
     else:
@@ -1418,9 +1460,10 @@ with tab_tech:
 with tab_email:
     if result is None:
         st.markdown(
-            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-            "Business email draft will be generated after running the evaluation."
-            "</div>",
+            '<div class="empty-state">'
+            '<span class="empty-state-icon">✉</span>'
+            'Business email draft will be generated after running the evaluation.'
+            '</div>',
             unsafe_allow_html=True,
         )
     else:
@@ -1441,9 +1484,10 @@ with tab_email:
 with tab_debug:
     if result is None:
         st.markdown(
-            "<div style='color:#888; padding:40px 0; text-align:center; font-size:0.95rem;'>"
-            "Parser and engine logs will appear here after running."
-            "</div>",
+            '<div class="empty-state">'
+            '<span class="empty-state-icon">🔍</span>'
+            'Parser and engine logs will appear here after running.'
+            '</div>',
             unsafe_allow_html=True,
         )
     else:
