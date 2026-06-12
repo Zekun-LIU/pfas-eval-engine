@@ -185,7 +185,7 @@ def _score_sheet_pfas_relevance(df: "pd.DataFrame") -> int:
         return 0
     # Sample up to 300 cells to keep scoring fast
     flat = df.astype(str).values.flatten()[:300]
-    text = " ".join(flat).lower()
+    text = " ".join(str(x) for x in flat).lower()
     pfas_markers = [
         "pfos", "pfoa", "pfba", "pfca", "pfsa", "pfhxa", "pfna", "pfda",
         "perfluoro", "fluorotelomer", "determinand", "ng/l", "µg/l", "ug/l",
