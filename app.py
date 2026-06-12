@@ -1434,11 +1434,10 @@ if run_clicked:
 
             st.rerun()
         except Exception as exc:
-            import traceback
+            import traceback as _tb
             loading_placeholder.empty()
             st.error(f"Evaluation error: {exc}")
-            with tab_debug:
-                st.code(traceback.format_exc(), language="text")
+            st.code(_tb.format_exc(), language="text")
 
 # Re-bind after potential rerun
 result = st.session_state.eval_result
