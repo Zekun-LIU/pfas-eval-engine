@@ -230,7 +230,7 @@ def run_module1(sample_name: str, pfas_data: Dict[str, Optional[float]]) -> Modu
     # Build SpeciesEntry list — only detected (non-None) species
     species_list: List[SpeciesEntry] = []
     for raw_name, conc in pfas_data.items():
-        name = normalize_pfas_name(raw_name)
+        name = normalize_pfas_name(str(raw_name))
         info = get_pfas_info(name)
         detected = conc is not None
         species_list.append(SpeciesEntry(
@@ -1565,7 +1565,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     "not independent samples. Maximum values drive equipment sizing. "
                     + (
                         f"Analytes with unknown Maximum (evaluated at Average): "
-                        f"{', '.join(_sc_avg_only)}. "
+                        f"{', '.join(str(x) for x in _sc_avg_only)}. "
                         "Request confirmed peak concentrations from customer before finalising design."
                         if _sc_avg_only else ""
                     )
@@ -1578,7 +1578,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     severity="warning",
                     rule_id="M1-MAX-UNKNOWN",
                     message=(
-                        f"Maximum concentration not reported for: {', '.join(_sc_avg_only)}. "
+                        f"Maximum concentration not reported for: {', '.join(str(x) for x in _sc_avg_only)}. "
                         "Worst-case assessment uses Average value — actual peak may be higher."
                     ),
                     detail=(

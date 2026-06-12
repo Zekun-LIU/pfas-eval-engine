@@ -905,7 +905,7 @@ def _render_module3(m3: Module3Result) -> None:
         _render_flag(f)
 
     if m3.missing_params:
-        st.caption(f"Not provided: {', '.join(m3.missing_params)}")
+        st.caption(f"Not provided: {', '.join(str(p) for p in m3.missing_params)}")
 
 
 def _build_text_report(result: EvaluationResult) -> str:
@@ -942,7 +942,7 @@ def _build_text_report(result: EvaluationResult) -> str:
             "",
             "MODULE 1 — PFAS COMPOSITION ANALYSIS",
             f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}",
-            f"  Primary Set (≥5%): {', '.join(m1.primary_set) if m1.primary_set else 'None'}",
+            f"  Primary Set (≥5%): {', '.join(str(n) for n in m1.primary_set) if m1.primary_set else 'None'}",
             "",
         ]
         if m1.species:
@@ -1154,7 +1154,7 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
                 unsafe_allow_html=True)
 
     if result.logs:
-        st.code("\n".join(result.logs), language="text")
+        st.code("\n".join(str(x) for x in result.logs), language="text")
 
     if parsed:
         # ── LLM-specific debug info ───────────────────────────────────────────
@@ -1207,11 +1207,11 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
         if parsed.nd_species:
             st.markdown("**Non-Detect (ND) Species — Analyzed but Below Detection Limit:**")
             for sample, nd_list in parsed.nd_species.items():
-                st.info(f"Sample '{sample}': {', '.join(nd_list)}")
+                st.info(f"Sample '{sample}': {', '.join(str(s) for s in nd_list)}")
 
         if parsed.keyword_species:
             st.markdown("**Keyword Species Detected (from text, no concentration):**")
-            st.code(", ".join(parsed.keyword_species))
+            st.code(", ".join(str(s) for s in parsed.keyword_species))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
