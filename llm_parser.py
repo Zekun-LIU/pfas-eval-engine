@@ -194,16 +194,123 @@ def _score_sheet_pfas_relevance(df: "pd.DataFrame") -> int:
     return min(sum(10 for m in pfas_markers if m in text), 100)
 
 
+def _try_reformat_coa_sheet(df: "pd.DataFrame") -> Optional[str]:
+    """
+    Detect if this sheet is a tabular CofA (analytes as rows, samples as columns).
+    If yes, reformat into explicit labeled text so the LLM cannot confuse RL values
+    with sample concentrations, and uses Customer Sample names not RPS numbers.
+
+    Detection criteria: a row containing 'Determinand' AND 'RL' AND 'Units'.
+    Sample names: the FIRST row above the header row that contains 'Customer Sample'
+    or has recognisable sample IDs (non-numeric strings) in the data columns.
+
+    Returns structured text, or None if the format is not detected.
+    """
+    nrows, ncols = len(df), len(df.columns)
+    if nrows < 3 or ncols < 4:
+        return None
+
+    def cell(ri: int, ci: int) -> str:
+        return str(df.iloc[ri, ci]).strip()
+
+    def row_lower(ri: int) -> str:
+        return " ".join(str(v) for v in df.iloc[ri, :]).lower()
+
+    # ── Step 1: find the header row ──────────────────────────────────────────
+    header_row: Optional[int] = None
+    for ri in range(min(30, nrows)):
+        rl = row_lower(ri)
+        if "determinand" in rl and ("rl" in rl or "reporting" in rl) and "unit" in rl:
+            header_row = ri
+            break
+    if header_row is None:
+        return None
+
+    # Parse header to identify column roles
+    header = [cell(header_row, ci) for ci in range(ncols)]
+    det_col = next((i for i, h in enumerate(header)
+                    if "determinand" in h.lower() or h.lower() == "analyte"), 0)
+    cas_col = next((i for i, h in enumerate(header) if "cas" in h.lower()), None)
+    rl_col  = next((i for i, h in enumerate(header)
+                    if h.upper() in ("RL", "REPORTING LIMIT", "DL", "MDL", "LOD", "LOQ")), None)
+    unit_col = next((i for i, h in enumerate(header)
+                     if h.lower() in ("units", "unit", "units (reported)", "unit (reported)")), None)
+
+    # Data (sample) columns start after the last metadata column
+    meta_end = max(filter(lambda x: x is not None, [det_col, cas_col, rl_col, unit_col, 5])) + 1
+
+    # ── Step 2: find customer sample name row ─────────────────────────────────
+    # Prefer a row explicitly labelled "Customer Sample No"
+    # Fall back to the first row with readable names in the sample columns
+    sample_names: Dict[int, str] = {}
+    for ri in range(header_row):
+        rl2 = row_lower(ri)
+        is_customer_row = "customer sample" in rl2
+        # Skip RPS-number rows (all values in sample columns are pure integers)
+        candidate = {ci: cell(ri, ci)
+                     for ci in range(meta_end, ncols)
+                     if cell(ri, ci) not in ("nan", "None", "", "(blank)")}
+        if not candidate:
+            continue
+        all_numeric = all(c.replace(".", "").isdigit() for c in candidate.values())
+        if is_customer_row:
+            sample_names = candidate
+            break          # highest-priority row found
+        if not all_numeric and not sample_names:
+            sample_names = candidate   # tentative (may be overwritten)
+
+    if not sample_names:
+        return None   # cannot identify samples → fall back to pipe format
+
+    # ── Step 3: build structured text ─────────────────────────────────────────
+    lines: List[str] = []
+    col_order = sorted(sample_names.keys())
+    lines.append("SAMPLE COLUMNS: " + ", ".join(f"col{ci}={sample_names[ci]}" for ci in col_order))
+    lines.append("NOTE: 'RL' values in rows below are Reporting Limits — NOT sample concentrations.")
+    lines.append("NOTE: A row whose name contains 'Sum' or has no individual Codes marker is a")
+    lines.append("      total/sum row. Use its values and IGNORE the preceding individual-isomer rows")
+    lines.append("      (e.g. use 'PFOS Sum L and br' and skip 'L-PFOS' / 'br-PFOS' rows).")
+    lines.append("")
+
+    for ri in range(header_row + 1, nrows):
+        det_name = cell(ri, det_col)
+        if det_name in ("nan", "None", ""):
+            continue
+
+        cas  = cell(ri, cas_col) if cas_col is not None else ""
+        rl_v = cell(ri, rl_col)  if rl_col  is not None else ""
+        unit = cell(ri, unit_col) if unit_col is not None else ""
+
+        # Build per-sample strings
+        sample_parts: List[str] = []
+        for ci in col_order:
+            sname = sample_names[ci]
+            val = cell(ri, ci)
+            if val in ("nan", "None", ""):
+                sample_parts.append(f"{sname}=blank")
+            elif val.startswith("<"):
+                sample_parts.append(f"{sname}=ND({val} {unit})")
+            else:
+                sample_parts.append(f"{sname}={val} {unit}")
+
+        cas_str  = f" (CAS {cas})" if cas  not in ("nan", "None", "") else ""
+        rl_str   = f" [RL={rl_v} {unit}]" if rl_v not in ("nan", "None", "") else f" [{unit}]"
+        lines.append(f"{det_name}{cas_str}{rl_str}: {', '.join(sample_parts)}")
+
+    return "\n".join(lines)
+
+
 def _excel_to_text(file_bytes: bytes, filename: str) -> str:
     """
-    Convert Excel sheets to pipe-separated text for LLM parsing.
+    Convert Excel sheets to structured text for LLM parsing.
 
-    Key improvements over v1:
-    - Scores each sheet for PFAS relevance and orders them highest-first
-    - Skips clearly irrelevant sheets (score == 0) to save context budget
-    - Raises the character budget from 7 000 → 28 000 so large CofA files
-      with 50+ analytes × 8+ samples fit without truncation
-    - Blank cells appear as "(blank)" so the LLM can distinguish blank from ND
+    For sheets that follow the tabular CofA format (analytes-as-rows,
+    samples-as-columns), the output is reformatted as explicit labeled lines:
+        AnalyteName (CAS X) [RL=Y unit]: W1=2360 ng/L, W2=ND(<2 ng/L), ...
+    This prevents the LLM from confusing RL column values with sample
+    concentrations, and ensures Customer Sample names are used (not RPS numbers).
+
+    For all other sheets the original pipe-separated format is used.
     """
     try:
         import pandas as pd
@@ -234,18 +341,26 @@ def _excel_to_text(file_bytes: bytes, filename: str) -> str:
     for score, sheet_name, df in scored:
         if score == 0:
             continue  # skip metadata-only / empty sheets
-        parts.append(f"\n=== Sheet: {sheet_name} (relevance: {score}) ===")
-        for ri in range(len(df)):  # include ALL rows — no row cap
-            row_cells = []
-            for ci in range(len(df.columns)):
-                raw = str(df.iloc[ri, ci]).strip()
-                if raw.lower() in ("nan", "none", ""):
-                    row_cells.append("(blank)")
-                else:
-                    row_cells.append(raw)
-            if all(c == "(blank)" for c in row_cells):
-                continue  # skip entirely blank rows
-            parts.append(" | ".join(row_cells))
+
+        # Try CofA structured reformat first
+        coa_text = _try_reformat_coa_sheet(df)
+        if coa_text:
+            parts.append(f"\n=== Sheet: {sheet_name} (relevance: {score}, structured-CofA) ===")
+            parts.append(coa_text)
+        else:
+            # Fall back to pipe-separated format
+            parts.append(f"\n=== Sheet: {sheet_name} (relevance: {score}) ===")
+            for ri in range(len(df)):
+                row_cells = []
+                for ci in range(len(df.columns)):
+                    raw = str(df.iloc[ri, ci]).strip()
+                    if raw.lower() in ("nan", "none", ""):
+                        row_cells.append("(blank)")
+                    else:
+                        row_cells.append(raw)
+                if all(c == "(blank)" for c in row_cells):
+                    continue
+                parts.append(" | ".join(str(x) for x in row_cells))
 
     text = "\n".join(parts)
     if len(text) > 40_000:
