@@ -389,7 +389,7 @@ st.markdown(
     /* ── Circular progress ring ──────────────────────────────── */
     .progress-ring-container {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 12px; padding: 32px 36px; margin: 8px 0 16px 0;
+        gap: 14px; padding: 36px 36px; margin: 8px 0 16px 0;
         background: #F5F5F7; border: 1px solid #E5E5EA; border-radius: 12px;
     }
     .progress-ring-wrapper {
@@ -401,12 +401,9 @@ st.markdown(
         transform: translate(-50%, -50%);
         font-size: 1.45rem; font-weight: 700; color: #1D1D1F; letter-spacing: -1px;
     }
-    .progress-ring-step {
-        font-size: 0.68rem; font-weight: 600; color: #8E8E93;
-        text-transform: uppercase; letter-spacing: 1.5px;
-    }
     .progress-ring-label {
-        font-size: 0.92rem; font-weight: 500; color: #1D1D1F;
+        font-size: 0.88rem; font-weight: 400; color: #6E6E73;
+        text-align: center; max-width: 420px; line-height: 1.55;
     }
     /* ── Email generating indicator ──────────────────────────── */
     .email-generating {
@@ -1221,11 +1218,16 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
 # PROGRESS RING HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _render_progress_circle(pct: int, step: str, label: str) -> str:
-    """Render an SVG circular progress ring with percentage, step label, and description."""
+_EVAL_STATUS_MSG = (
+    "Processing uploaded files through the PFAS Evaluation Engine "
+    "built on Claros expertise…"
+)
+
+def _render_progress_circle(pct: int) -> str:
+    """Render an SVG circular progress ring with percentage."""
     r = 44
     circumference = 2 * 3.14159 * r   # ≈ 276.5
-    offset = circumference * (1 - pct / 100)
+    offset = circumference * (1 - max(0, min(100, pct)) / 100)
     return (
         '<div class="progress-ring-container">'
         '<div class="progress-ring-wrapper">'
@@ -1237,8 +1239,7 @@ def _render_progress_circle(pct: int, step: str, label: str) -> str:
         '</svg>'
         f'<div class="progress-ring-pct">{pct}%</div>'
         '</div>'
-        f'<div class="progress-ring-step">{step}</div>'
-        f'<div class="progress-ring-label">{label}</div>'
+        f'<div class="progress-ring-label">{_EVAL_STATUS_MSG}</div>'
         '</div>'
     )
 
@@ -1339,19 +1340,19 @@ with ctrl_a:
     st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
     if _api_key:
         use_llm = st.toggle(
-            "✨ AI-Assisted Parsing (Claude Sonnet)",
+            "✨ Enhanced Document Reading",
             value=True,
             help=(
-                "Use Claude Sonnet to read the uploaded documents and extract all data. "
+                "Use the enhanced document reading mode to extract all data from uploaded files. "
                 "Handles flexible layouts, multilingual labels, statistical-summary detection, "
                 "and large CofA files with 50+ analytes. "
-                "Falls back to rule-based parsing automatically if the API call fails."
+                "Falls back to standard parsing automatically if unavailable."
             ),
         )
-        st.caption("🟢 API key configured — AI parsing available")
+        st.caption("🟢 Enhanced reading available")
     else:
         use_llm = False
-        st.caption("⚪ AI parsing unavailable — add ANTHROPIC_API_KEY to Streamlit secrets to enable.")
+        st.caption("⚪ Enhanced reading unavailable — API key not configured.")
 
 with ctrl_b:
     st.markdown('<div class="section-header">Active Sources</div>', unsafe_allow_html=True)
@@ -1401,70 +1402,87 @@ if run_clicked:
         with tab_tech:
             st.warning("Please provide at least one input source before running.")
     else:
-        try:
-            # ── Step 1: Read file bytes ──────────────────────────────────────
+        import threading as _threading
+        import time as _time
+
+        # Read file bytes in main thread (UploadedFile is not thread-safe)
+        _excel_bytes = excel_file.read() if excel_file else None
+        _pdf_bytes   = pdf_file.read()   if pdf_file   else None
+        _excel_name  = excel_file.name   if excel_file else None
+        _pdf_name    = pdf_file.name     if pdf_file   else None
+
+        # Shared state between main and background threads
+        _shared: dict = {"parsed": None, "eval_result": None, "error": None, "done": False}
+
+        def _background_work() -> None:
+            """Run parse + evaluate in background so main thread can animate progress."""
+            try:
+                if use_llm and _api_key:
+                    from llm_parser import parse_with_llm
+                    _p = parse_with_llm(
+                        excel_bytes=_excel_bytes,
+                        excel_filename=_excel_name,
+                        pdf_bytes=_pdf_bytes,
+                        pdf_filename=_pdf_name,
+                        goals_text=goals_text,
+                        api_key=_api_key,
+                    )
+                    if email_text.strip():
+                        from parser import parse_text
+                        _t = parse_text(email_text, "")
+                        _p.merge(_t)
+                        _p.customer_notes_text = email_text.strip()
+                else:
+                    _p = parse_all(
+                        excel_bytes=_excel_bytes,
+                        excel_filename=_excel_name,
+                        pdf_bytes=_pdf_bytes,
+                        pdf_filename=_pdf_name,
+                        email_text=email_text,
+                        goals_text=goals_text,
+                    )
+                _shared["parsed"]      = _p
+                _shared["eval_result"] = evaluate(_p)
+            except Exception as _exc:
+                _shared["error"] = _exc
+            finally:
+                _shared["done"] = True
+
+        # Show initial state and start background thread
+        loading_placeholder.markdown(_render_progress_circle(1), unsafe_allow_html=True)
+        _thread = _threading.Thread(target=_background_work, daemon=True)
+        _thread.start()
+
+        # ── Smooth progress animation (main thread) ───────────────────────
+        # Increment ~0.9 % every 0.3 s → reaches ~88 % in ≈ 29 s.
+        # Caps at 88 % until the background thread finishes, then snaps to 100 %.
+        _pct       = 1.0
+        _step      = 0.9          # % per tick
+        _interval  = 0.3          # seconds between ticks
+        _cap       = 88.0         # simulated ceiling while waiting
+
+        while not _shared["done"]:
+            _pct = min(_cap, _pct + _step)
             loading_placeholder.markdown(
-                _render_progress_circle(5, "Step 1 of 2", "Reading uploaded files…"),
-                unsafe_allow_html=True,
+                _render_progress_circle(int(_pct)), unsafe_allow_html=True
             )
-            excel_bytes = excel_file.read() if excel_file else None
-            pdf_bytes   = pdf_file.read()   if pdf_file   else None
+            _time.sleep(_interval)
 
-            if use_llm and _api_key:
-                # ── Step 2: LLM parsing ──────────────────────────────────────
-                loading_placeholder.markdown(
-                    _render_progress_circle(15, "Step 1 of 2", "Sending to AI parser (Claude Sonnet)…"),
-                    unsafe_allow_html=True,
-                )
-                from llm_parser import parse_with_llm
-                parsed = parse_with_llm(
-                    excel_bytes=excel_bytes,
-                    excel_filename=excel_file.name if excel_file else None,
-                    pdf_bytes=pdf_bytes,
-                    pdf_filename=pdf_file.name if pdf_file else None,
-                    goals_text=goals_text,
-                    api_key=_api_key,
-                )
-                if email_text.strip():
-                    from parser import parse_text
-                    text_result = parse_text(email_text, "")
-                    parsed.merge(text_result)
-                    parsed.customer_notes_text = email_text.strip()
-            else:
-                loading_placeholder.markdown(
-                    _render_progress_circle(30, "Step 1 of 2", "Parsing document…"),
-                    unsafe_allow_html=True,
-                )
-                parsed = parse_all(
-                    excel_bytes=excel_bytes,
-                    excel_filename=excel_file.name if excel_file else None,
-                    pdf_bytes=pdf_bytes,
-                    pdf_filename=pdf_file.name if pdf_file else None,
-                    email_text=email_text,
-                    goals_text=goals_text,
-                )
-
-            # ── Step 3: Engine evaluation ────────────────────────────────────
-            loading_placeholder.markdown(
-                _render_progress_circle(65, "Step 2 of 2", "Running evaluation engine…"),
-                unsafe_allow_html=True,
-            )
-            eval_result = evaluate(parsed)
-
-            loading_placeholder.markdown(
-                _render_progress_circle(95, "Step 2 of 2", "Preparing output…"),
-                unsafe_allow_html=True,
-            )
-            st.session_state.eval_result  = eval_result
-            st.session_state.parsed_data  = parsed
-            st.session_state.llm_email    = None   # generated lazily in email tab
-            st.rerun()
-
-        except Exception as exc:
-            import traceback as _tb
+        # Background work finished — handle result or error
+        if _shared["error"]:
             loading_placeholder.empty()
-            st.error(f"Evaluation error: {exc}")
+            import traceback as _tb
+            st.error(f"Evaluation error: {_shared['error']}")
             st.code(_tb.format_exc(), language="text")
+        else:
+            # Snap to 100 % then rerun
+            loading_placeholder.markdown(
+                _render_progress_circle(100), unsafe_allow_html=True
+            )
+            st.session_state.eval_result = _shared["eval_result"]
+            st.session_state.parsed_data = _shared["parsed"]
+            st.session_state.llm_email   = None   # generated lazily in email tab
+            st.rerun()
 
 # Re-bind after potential rerun
 result = st.session_state.eval_result
@@ -1500,7 +1518,7 @@ with tab_email:
         if llm_email is None and use_llm and _api_key and _parsed_data:
             _email_ph = st.empty()
             _email_ph.markdown(
-                '<div class="email-generating">✉&nbsp; Generating AI email draft with Claude Sonnet…</div>',
+                '<div class="email-generating">✉&nbsp; Preparing business email draft…</div>',
                 unsafe_allow_html=True,
             )
             try:
@@ -1518,7 +1536,7 @@ with tab_email:
         if llm_email:
             email_version = st.radio(
                 "Email version:",
-                ["✨ AI-Written (Claude Sonnet)", "📄 Template-Generated"],
+                ["✨ Enhanced Draft", "📄 Template-Generated"],
                 horizontal=True,
                 label_visibility="collapsed",
             )
