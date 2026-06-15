@@ -1218,10 +1218,7 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
 # PROGRESS RING HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_EVAL_STATUS_MSG = (
-    "Processing uploaded files through the PFAS Evaluation Engine "
-    "built on Claros expertise…"
-)
+_EVAL_STATUS_MSG = "Processing uploaded files through Claros PFAS Evaluation Engine"
 
 def _render_progress_circle(pct: int) -> str:
     """Render an SVG circular progress ring with percentage."""
