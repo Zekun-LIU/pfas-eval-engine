@@ -386,29 +386,32 @@ st.markdown(
     /* ── Hide native Streamlit running indicator ──────────────── */
     [data-testid="stStatusWidget"] { display: none !important; }
 
-    /* ── Custom loading indicator ─────────────────────────────── */
-    .loading-indicator {
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        gap: 14px; padding: 32px 36px; margin: 8px 0 16px 0;
-        background: #F5F5F7; border: 1px solid #E5E5EA;
-        border-radius: 12px; font-size: 0.95rem; font-weight: 500;
-        color: #1D1D1F; letter-spacing: 0.1px;
+    /* ── Circular progress ring ──────────────────────────────── */
+    .progress-ring-container {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 12px; padding: 32px 36px; margin: 8px 0 16px 0;
+        background: #F5F5F7; border: 1px solid #E5E5EA; border-radius: 12px;
     }
-    .loading-dot-row { display: flex; gap: 9px; }
-    .loading-dot {
-        width: 9px; height: 9px; background: #007AFF;
-        border-radius: 50%; animation: ld-bounce 1.4s ease-in-out infinite; opacity: 0.35;
+    .progress-ring-wrapper {
+        position: relative; width: 110px; height: 110px;
     }
-    .loading-dot:nth-child(1) { animation-delay: 0s; }
-    .loading-dot:nth-child(2) { animation-delay: 0.22s; }
-    .loading-dot:nth-child(3) { animation-delay: 0.44s; }
-    @keyframes ld-bounce {
-        0%, 70%, 100% { transform: translateY(0);   opacity: 0.35; }
-        35%            { transform: translateY(-9px); opacity: 1; }
+    .progress-ring-wrapper svg { width: 110px; height: 110px; }
+    .progress-ring-pct {
+        position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 1.45rem; font-weight: 700; color: #1D1D1F; letter-spacing: -1px;
     }
-    @media (prefers-reduced-motion: reduce) {
-        .loading-dot { animation: none !important; opacity: 0.7; }
+    .progress-ring-step {
+        font-size: 0.68rem; font-weight: 600; color: #8E8E93;
+        text-transform: uppercase; letter-spacing: 1.5px;
+    }
+    .progress-ring-label {
+        font-size: 0.92rem; font-weight: 500; color: #1D1D1F;
+    }
+    /* ── Email generating indicator ──────────────────────────── */
+    .email-generating {
+        color: #6E6E73; font-size: 0.9rem; font-weight: 500;
+        padding: 20px 0; text-align: center; letter-spacing: 0.1px;
     }
 
     </style>
@@ -1215,6 +1218,32 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PROGRESS RING HELPER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _render_progress_circle(pct: int, step: str, label: str) -> str:
+    """Render an SVG circular progress ring with percentage, step label, and description."""
+    r = 44
+    circumference = 2 * 3.14159 * r   # ≈ 276.5
+    offset = circumference * (1 - pct / 100)
+    return (
+        '<div class="progress-ring-container">'
+        '<div class="progress-ring-wrapper">'
+        '<svg viewBox="0 0 100 100">'
+        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="#E5E5EA" stroke-width="9"/>'
+        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="#007AFF" stroke-width="9"'
+        f' stroke-dasharray="{circumference:.1f}" stroke-dashoffset="{offset:.1f}"'
+        f' stroke-linecap="round" transform="rotate(-90 50 50)"/>'
+        '</svg>'
+        f'<div class="progress-ring-pct">{pct}%</div>'
+        '</div>'
+        f'<div class="progress-ring-step">{step}</div>'
+        f'<div class="progress-ring-label">{label}</div>'
+        '</div>'
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SESSION STATE INITIALISATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1372,23 +1401,21 @@ if run_clicked:
         with tab_tech:
             st.warning("Please provide at least one input source before running.")
     else:
-        # Show custom loading message — replaces the native top-right spinner
-        loading_placeholder.markdown(
-            '<div class="loading-indicator">'
-            '<div class="loading-dot-row">'
-            '<span class="loading-dot"></span>'
-            '<span class="loading-dot"></span>'
-            '<span class="loading-dot"></span>'
-            '</div>'
-            '<div>Reading data and running evaluation engine</div>'
-            '</div>',
-            unsafe_allow_html=True,
-        )
         try:
+            # ── Step 1: Read file bytes ──────────────────────────────────────
+            loading_placeholder.markdown(
+                _render_progress_circle(5, "Step 1 of 2", "Reading uploaded files…"),
+                unsafe_allow_html=True,
+            )
             excel_bytes = excel_file.read() if excel_file else None
             pdf_bytes   = pdf_file.read()   if pdf_file   else None
 
             if use_llm and _api_key:
+                # ── Step 2: LLM parsing ──────────────────────────────────────
+                loading_placeholder.markdown(
+                    _render_progress_circle(15, "Step 1 of 2", "Sending to AI parser (Claude Sonnet)…"),
+                    unsafe_allow_html=True,
+                )
                 from llm_parser import parse_with_llm
                 parsed = parse_with_llm(
                     excel_bytes=excel_bytes,
@@ -1398,13 +1425,16 @@ if run_clicked:
                     goals_text=goals_text,
                     api_key=_api_key,
                 )
-                # Also parse any pasted text (email_text) with rule-based and merge
                 if email_text.strip():
                     from parser import parse_text
                     text_result = parse_text(email_text, "")
                     parsed.merge(text_result)
                     parsed.customer_notes_text = email_text.strip()
             else:
+                loading_placeholder.markdown(
+                    _render_progress_circle(30, "Step 1 of 2", "Parsing document…"),
+                    unsafe_allow_html=True,
+                )
                 parsed = parse_all(
                     excel_bytes=excel_bytes,
                     excel_filename=excel_file.name if excel_file else None,
@@ -1414,25 +1444,22 @@ if run_clicked:
                     goals_text=goals_text,
                 )
 
+            # ── Step 3: Engine evaluation ────────────────────────────────────
+            loading_placeholder.markdown(
+                _render_progress_circle(65, "Step 2 of 2", "Running evaluation engine…"),
+                unsafe_allow_html=True,
+            )
             eval_result = evaluate(parsed)
-            st.session_state.eval_result = eval_result
-            st.session_state.parsed_data = parsed
 
-            # ── LLM email generation ──────────────────────────────────────────
-            if use_llm and _api_key:
-                try:
-                    llm_email = _generate_llm_email(
-                        eval_result,
-                        parsed.llm_project_context,
-                        _api_key,
-                    )
-                    st.session_state.llm_email = llm_email
-                except Exception:
-                    st.session_state.llm_email = None
-            else:
-                st.session_state.llm_email = None
-
+            loading_placeholder.markdown(
+                _render_progress_circle(95, "Step 2 of 2", "Preparing output…"),
+                unsafe_allow_html=True,
+            )
+            st.session_state.eval_result  = eval_result
+            st.session_state.parsed_data  = parsed
+            st.session_state.llm_email    = None   # generated lazily in email tab
             st.rerun()
+
         except Exception as exc:
             import traceback as _tb
             loading_placeholder.empty()
@@ -1455,7 +1482,7 @@ with tab_tech:
     else:
         _render_technical_output(result, st.session_state.parsed_data)
 
-# ── Tab 2: Email Draft ────────────────────────────────────────────────────────
+# ── Tab 2: Email Draft — generated lazily here so Technical Output is visible first
 with tab_email:
     if result is None:
         st.markdown(
@@ -1467,6 +1494,27 @@ with tab_email:
         )
     else:
         llm_email = st.session_state.get("llm_email")
+        _parsed_data = st.session_state.get("parsed_data")
+
+        # Generate email now (user is already looking at Technical Output tab)
+        if llm_email is None and use_llm and _api_key and _parsed_data:
+            _email_ph = st.empty()
+            _email_ph.markdown(
+                '<div class="email-generating">✉&nbsp; Generating AI email draft with Claude Sonnet…</div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                llm_email = _generate_llm_email(
+                    result,
+                    _parsed_data.llm_project_context,
+                    _api_key,
+                )
+                st.session_state.llm_email = llm_email
+            except Exception:
+                llm_email = None
+                st.session_state.llm_email = None
+            _email_ph.empty()
+
         if llm_email:
             email_version = st.radio(
                 "Email version:",
