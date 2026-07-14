@@ -760,7 +760,9 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
                     "High organic loading will compete with PFAS in oxidative treatment systems "
                     "and increase reagent consumption. "
                     "Pre-treatment (e.g., coagulation, sedimentation, biological pre-treatment) required. "
-                    "Extend project timeline to approximately 8 weeks."
+                    "Extend project timeline to approximately 8 weeks. "
+                    "NOTE: confirm the COD source — if it is methanol/ethanol, prior experience shows "
+                    "alcohols do not significantly affect treatment and the sample may proceed unchanged."
                 ),
             ))
             status = "CONDITIONAL"
@@ -774,7 +776,11 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
             flags.append(FlagItem(
                 severity="warning", rule_id="M3_R1",
                 message=f"COD high: {cod:.0f} mg/L > {M3_COD_MAX_MG_L:.0f} mg/L. Pretreatment likely required.",
-                detail="Extend project timeline to ~8 weeks. Pretreatment design required.",
+                detail=(
+                    "Extend project timeline to ~8 weeks. Pretreatment design required. "
+                    "NOTE: confirm the COD source — if it is methanol/ethanol, prior experience shows "
+                    "alcohols do not significantly affect treatment and the sample may proceed unchanged."
+                ),
             ))
             status = "CONDITIONAL"
         else:

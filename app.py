@@ -45,6 +45,10 @@ from utils import (
     severity_badge,
     status_badge_html,
 )
+from module4 import (
+    generate_test_plans, build_plan_text, TestPlan,
+    SHORT_TIMEPOINTS, LONG_TIMEPOINTS, LONG_DENSE_TIMEPOINTS,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1214,6 +1218,142 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
             st.code(", ".join(str(s) for s in parsed.keyword_species))
 
 
+_SCHEDULE_LABELS = {
+    "short":      "Short (≤ 2 h)",
+    "long":       "Long (≤ 24 h)",
+    "long_dense": "Long + dense first 2 h",
+}
+_SCHEDULE_TIMEPOINTS = {
+    "short":      SHORT_TIMEPOINTS,
+    "long":       LONG_TIMEPOINTS,
+    "long_dense": LONG_DENSE_TIMEPOINTS,
+}
+
+
+def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
+    """Render one bench test plan as editable fields; return nothing (state via widget keys)."""
+    k = f"plan{idx}"
+    st.markdown(
+        f'<div class="section-header">Bench Test Plan — {plan.sample_name}</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Total PFAS: {format_conc_auto(plan.total_pfas_mg_L)} &nbsp;·&nbsp; "
+        "750 mL Amazon Reactor &nbsp;·&nbsp; Proof-of-Concept · all fields editable"
+    )
+
+    # ── Reaction conditions ──────────────────────────────────────────────────
+    st.markdown("**Reaction Conditions**")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.markdown(f"*{plan.conditions[0].label}*")
+        st.number_input("Sulfite — Reagent A (mM)", min_value=0.0, step=1.0,
+                        value=float(plan.conditions[0].sulfite_mM), key=f"{k}_sA")
+        st.number_input("Iodide — Reagent B (mM)", min_value=0.0, step=0.5,
+                        value=float(plan.conditions[0].iodide_mM), key=f"{k}_iA")
+    with cc2:
+        if len(plan.conditions) > 1:
+            st.markdown(f"*{plan.conditions[1].label}*")
+            st.number_input("Sulfite — Reagent A (mM)", min_value=0.0, step=1.0,
+                            value=float(plan.conditions[1].sulfite_mM), key=f"{k}_sB")
+            st.number_input("Iodide — Reagent B (mM)", min_value=0.0, step=0.5,
+                            value=float(plan.conditions[1].iodide_mM), key=f"{k}_iB")
+            st.caption(plan.conditions[1].note)
+        else:
+            st.markdown("*Water-adjusted condition*")
+            st.caption("Equals the reference (no adjustment needed for this water).")
+
+    # ── Sampling schedule ────────────────────────────────────────────────────
+    st.markdown("**Sampling Schedule**")
+    sched_keys = list(_SCHEDULE_LABELS.keys())
+    sel = st.selectbox(
+        "Schedule", options=sched_keys,
+        index=sched_keys.index(plan.schedule_type),
+        format_func=lambda s: _SCHEDULE_LABELS[s],
+        key=f"{k}_sched", label_visibility="collapsed",
+    )
+    st.caption("Timepoints: " + ", ".join(_SCHEDULE_TIMEPOINTS[sel]))
+    st.caption(plan.schedule_rationale)
+
+    # ── Pretreatment / dilution ──────────────────────────────────────────────
+    st.markdown("**Pretreatment**")
+    st.text_area("Pretreatment", value="\n".join(plan.pretreatment),
+                 key=f"{k}_pre", label_visibility="collapsed", height=90)
+    st.text_input("Dilution", value=plan.dilution, key=f"{k}_dil")
+
+    # ── pH ───────────────────────────────────────────────────────────────────
+    st.markdown("**pH**")
+    st.number_input("Reaction pH setpoint", min_value=0.0, max_value=14.0, step=0.5,
+                    value=float(plan.reaction_ph), key=f"{k}_ph")
+    st.caption(plan.ph_monitoring)
+
+    # ── External TOF ─────────────────────────────────────────────────────────
+    st.markdown("**External TOF (Novem)**")
+    tof_val = plan.external_tof + (("\n" + plan.fluoride_handling) if plan.fluoride_handling else "")
+    st.text_area("External TOF", value=tof_val, key=f"{k}_tof",
+                 label_visibility="collapsed", height=90)
+
+    # ── Notes ────────────────────────────────────────────────────────────────
+    if plan.customer_info_requests:
+        st.warning("**Confirm with customer:** " + " | ".join(plan.customer_info_requests))
+    if plan.optimization_notes:
+        st.caption("Optimization (later stage): " + " | ".join(plan.optimization_notes))
+
+    # ── Download (reads current edited widget values) ────────────────────────
+    st.download_button(
+        "⬇  Download This Plan (.txt)",
+        data=_plan_export_from_state(plan, idx),
+        file_name=f"BenchTestPlan_{plan.sample_name}.txt".replace(" ", "_"),
+        mime="text/plain",
+        key=f"{k}_dl",
+    )
+    st.markdown("---")
+
+
+def _plan_export_from_state(plan: "TestPlan", idx: int) -> str:
+    """Build export text from the current (possibly edited) widget state."""
+    k = f"plan{idx}"
+    ss = st.session_state
+    sched = ss.get(f"{k}_sched", plan.schedule_type)
+    lines = [
+        "=" * 66,
+        f"BENCH TEST PLAN — {plan.sample_name}",
+        "750 mL Amazon Reactor  |  Proof-of-Concept stage",
+        "=" * 66,
+        f"Total PFAS: {format_conc_auto(plan.total_pfas_mg_L)}",
+        "",
+        "REACTION CONDITIONS",
+        f"  {plan.conditions[0].label}: {ss.get(f'{k}_sA', plan.conditions[0].sulfite_mM):g} mM sulfite "
+        f"+ {ss.get(f'{k}_iA', plan.conditions[0].iodide_mM):g} mM iodide",
+    ]
+    if len(plan.conditions) > 1:
+        lines.append(
+            f"  {plan.conditions[1].label}: {ss.get(f'{k}_sB', plan.conditions[1].sulfite_mM):g} mM sulfite "
+            f"+ {ss.get(f'{k}_iB', plan.conditions[1].iodide_mM):g} mM iodide"
+        )
+    lines += [
+        "",
+        f"SAMPLING SCHEDULE: {_SCHEDULE_LABELS.get(sched, sched)}",
+        f"  Timepoints: {', '.join(_SCHEDULE_TIMEPOINTS.get(sched, plan.schedule_timepoints))}",
+        "",
+        "PRETREATMENT",
+        f"{ss.get(f'{k}_pre', chr(10).join(plan.pretreatment))}",
+        "",
+        f"DILUTION: {ss.get(f'{k}_dil', plan.dilution)}",
+        "",
+        f"pH: setpoint {ss.get(f'{k}_ph', plan.reaction_ph):g}. {plan.ph_monitoring}",
+        "",
+        "EXTERNAL TOF (Novem)",
+        f"{ss.get(f'{k}_tof', plan.external_tof)}",
+    ]
+    if plan.optimization_notes:
+        lines += ["", "OPTIMIZATION (later stage)", *[f"  - {n}" for n in plan.optimization_notes]]
+    if plan.customer_info_requests:
+        lines += ["", "CONFIRM WITH CUSTOMER", *[f"  - {n}" for n in plan.customer_info_requests]]
+    lines += ["", "=" * 66, "Claros R&D Team  |  Bench Test Plan (POC)", "=" * 66]
+    return "\n".join(lines)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROGRESS RING HELPER
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1251,6 +1391,8 @@ if "parsed_data" not in st.session_state:
     st.session_state.parsed_data = None
 if "llm_email" not in st.session_state:
     st.session_state.llm_email = None
+if "test_plans" not in st.session_state:
+    st.session_state.test_plans = None
 
 result: EvaluationResult | None = st.session_state.eval_result
 
@@ -1384,12 +1526,13 @@ st.markdown("---")
 loading_placeholder = st.empty()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# OUTPUT TABS — three-layer
+# OUTPUT TABS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-tab_tech, tab_email, tab_debug = st.tabs([
+tab_tech, tab_email, tab_plan, tab_debug = st.tabs([
     "📋  Technical Output",
     "✉  Business Email Draft",
+    "🧪  Bench Test Plan",
     "🔍  Debug / Logs",
 ])
 
@@ -1479,6 +1622,7 @@ if run_clicked:
             st.session_state.eval_result = _shared["eval_result"]
             st.session_state.parsed_data = _shared["parsed"]
             st.session_state.llm_email   = None   # generated lazily in email tab
+            st.session_state.test_plans  = None   # regenerate on demand for new data
             st.rerun()
 
 # Re-bind after potential rerun
@@ -1537,12 +1681,44 @@ with tab_email:
                 horizontal=True,
                 label_visibility="collapsed",
             )
-            chosen_email = llm_email if "AI" in email_version else None
+            chosen_email = llm_email if "Enhanced" in email_version else None
             _render_email_draft(result, email_text_override=chosen_email)
         else:
             _render_email_draft(result)
 
-# ── Tab 3: Debug / Logs ───────────────────────────────────────────────────────
+# ── Tab 3: Bench Test Plan ────────────────────────────────────────────────────
+with tab_plan:
+    if result is None:
+        st.markdown(
+            '<div class="empty-state">'
+            '<span class="empty-state-icon">🧪</span>'
+            'Run an evaluation first. Generate the bench test plan once the physical '
+            'water samples have arrived.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption(
+            "Bench-scale Proof-of-Concept plan per sample. Generate this once the samples "
+            "have physically arrived; all recommended values below are editable before export."
+        )
+        if st.button("🧪  Generate Bench Test Plan", key="gen_plan_btn"):
+            st.session_state.test_plans = generate_test_plans(
+                result, st.session_state.parsed_data
+            )
+
+        _plans = st.session_state.get("test_plans")
+        if _plans:
+            for _i, _plan in enumerate(_plans):
+                _render_editable_plan(_plan, _i)
+        else:
+            st.info(
+                "Click **Generate Bench Test Plan** to build a per-sample test protocol "
+                "from the evaluation results.",
+                icon="🧪",
+            )
+
+# ── Tab 4: Debug / Logs ───────────────────────────────────────────────────────
 with tab_debug:
     if result is None:
         st.markdown(
