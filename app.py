@@ -246,47 +246,22 @@ st.markdown(
         border-bottom: 1px solid #F0F0F2;
     }
 
-    /* ── Flag rows — quiet list style, colored severity chips ── */
-    /* Only CRITICAL keeps a full colored background (must interrupt). */
+    /* ── Flag rows ────────────────────────────────────────────── */
     .flag-row {
-        display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-        padding: 10px 4px; margin: 0;
-        font-size: 0.86rem; line-height: 1.6;
+        padding: 13px 18px; border-radius: 10px;
+        margin-bottom: 10px; font-size: 0.86rem; line-height: 1.65;
         color: #1D1D1F !important;
-        border-bottom: 1px solid #F0F0F2;
     }
-    .flag-chip {
-        flex: none;
-        font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em;
-        text-transform: uppercase;
-        padding: 2px 8px; border-radius: 5px;
-        font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-    }
-    .flag-rid {
-        flex: none;
-        font-size: 0.72rem; font-weight: 600; color: #8E8E93;
-        font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-    }
-    .flag-msg { flex: 1 1 60%; min-width: 260px; color: #1D1D1F !important; }
-    .chip-critical         { background: #FFE3E1; color: #C0261F; }
-    .chip-warning          { background: #FCEFD2; color: #9A6100; }
-    .chip-info             { background: #DFEBFB; color: #0A5DC2; }
-    .chip-ok               { background: #DCF3E3; color: #1A7A37; }
-    .chip-commercial       { background: #EEE4FA; color: #7D3BBD; }
-    .chip-technical        { background: #FCE8D8; color: #B35300; }
-    .chip-pathway          { background: #DDF4EA; color: #157A50; }
-    .chip-special_handling { background: #ECECEE; color: #5C5C61; }
-    /* CRITICAL — the one severity that keeps a loud background */
-    .flag-critical {
-        background: #FFF1F2; border: 1px solid #FFC9C5;
-        border-left: 4px solid #FF3B30; border-radius: 10px;
-        padding: 12px 16px; margin: 6px 0 10px 0;
-    }
-    .flag-detail {
-        flex-basis: 100%;
-        font-size: 0.80rem; color: #6E6E73 !important;
-        margin-top: 2px; font-style: italic; line-height: 1.55;
-    }
+    .flag-critical        { background: #FFF1F2; border-left: 4px solid #FF3B30; }
+    .flag-warning         { background: #FFFBEB; border-left: 4px solid #FF9500; }
+    .flag-info            { background: #F0F5FF; border-left: 4px solid #007AFF; }
+    .flag-ok              { background: #F0FFF5; border-left: 4px solid #34C759; }
+    .flag-commercial      { background: #F5F0FF; border-left: 4px solid #AF52DE; }
+    .flag-technical       { background: #FFF8F0; border-left: 4px solid #FF6B00; }
+    .flag-pathway         { background: #F0FFF9; border-left: 4px solid #30D158; }
+    .flag-special_handling{ background: #F8F8F9; border-left: 4px solid #8E8E93; }
+    .flag-row strong      { color: #1D1D1F !important; }
+    .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 6px; font-style: italic; line-height: 1.55; }
 
     /* ── Variability banner ───────────────────────────────────── */
     .variability-banner {
@@ -465,27 +440,32 @@ st.markdown(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_flag(flag) -> None:
-    """Render a single FlagItem as a quiet list row with a colored severity chip.
-
-    Only CRITICAL keeps a full colored background — it must interrupt the reader.
-    """
+    """Render a single FlagItem as a styled HTML block — supports all spec severity types."""
+    css_class = f"flag-{flag.severity}"
+    icon = {
+        "critical":        "🔴",
+        "commercial":      "🟣",
+        "technical":       "🟠",
+        "pathway":         "🔵",
+        "special_handling":"⚪",
+        "warning":         "🟡",
+        "info":            "🔵",
+        "ok":              "🟢",
+    }.get(flag.severity, "⚪")
     label = {
         "critical":        "CRITICAL",
         "commercial":      "COMMERCIAL",
         "technical":       "TECHNICAL",
         "pathway":         "PATHWAY",
-        "special_handling":"SPECIAL",
+        "special_handling":"SPECIAL HANDLING",
         "warning":         "WARNING",
         "info":            "INFO",
         "ok":              "OK",
     }.get(flag.severity, flag.severity.upper())
-    row_class = "flag-row flag-critical" if flag.severity == "critical" else "flag-row"
     detail_html = f'<div class="flag-detail">{flag.detail}</div>' if flag.detail else ""
     st.markdown(
-        f'<div class="{row_class}">'
-        f'<span class="flag-chip chip-{flag.severity}">{label}</span>'
-        f'<span class="flag-rid">{flag.rule_id}</span>'
-        f'<span class="flag-msg">{flag.message}</span>'
+        f'<div class="flag-row {css_class}">'
+        f'<strong>{icon} [{label} — {flag.rule_id}]</strong> {flag.message}'
         f'{detail_html}</div>',
         unsafe_allow_html=True,
     )
