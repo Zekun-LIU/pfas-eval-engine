@@ -304,6 +304,12 @@ st.markdown(
         text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
     }
 
+    /* ── Placeholder text — light, clearly example-only ───────── */
+    [data-testid="stTextArea"] textarea::placeholder {
+        color: #B8BCC2 !important;
+        opacity: 1 !important;
+    }
+
     /* ── Run button — flat ────────────────────────────────────── */
     div[data-testid="stButton"] > button {
         width: 100%;
