@@ -50,7 +50,9 @@ NITRATE_ELECTROCHEM_PPM = 20.0   # > this → also recommend electrochemical pre
 REACTION_PH            = 12.0
 PFAS_MIDDOSE_PH_PPM    = 20.0    # > this → "consider" mid-run pH re-dose (optimization)
 
-NOVEM_TOF_DL_MG_L      = 1.0     # Novem external TOF detection limit = 1 ppm (as F)
+NOVEM_TOF_DL_MG_L         = 1.0   # Novem external TOF detection limit = 1 ppm (as F)
+NOVEM_TOF_BORDERLINE_MG_L = 0.5   # theoretical TOF 0.5–1 ppm → borderline (lower-bound estimate;
+                                  # actual organofluorine may exceed DL) — discuss before deciding
 FLUORIDE_HANDLING_MG_L = 100.0   # high fluoride → Novem background note + pH>12 / HF caution
 
 THROUGHPUT_HIGH_GPM        = 100.0   # ≥ this → prefer short / dense-first sampling
@@ -338,6 +340,17 @@ def _generate_one_plan(
                 f"No customer TOF/AOF reported. Expected TOF from identified species: "
                 f"{format_conc_auto(theo_tof)} as F — above the Novem detection limit "
                 f"({NOVEM_TOF_DL_MG_L:.0f} ppm). Send raw water to Novem for TOF."
+            )
+        elif theo_tof > NOVEM_TOF_BORDERLINE_MG_L:
+            # Borderline: theoretical TOF is a LOWER BOUND (unknown species excluded),
+            # so the actual organofluorine load may still exceed the DL.
+            external_tof_needed = True   # submission possible — keep fluoride guidance
+            external_tof = (
+                f"No customer TOF/AOF reported. Expected TOF from identified species: "
+                f"{format_conc_auto(theo_tof)} as F — BORDERLINE: below the Novem detection "
+                f"limit ({NOVEM_TOF_DL_MG_L:.0f} ppm), but this estimate is a lower bound "
+                "(unknown species are not included), so the actual organofluorine load may "
+                "exceed the DL. Action: discuss with Novem and Zack before deciding whether to submit."
             )
         else:
             external_tof_needed = False
