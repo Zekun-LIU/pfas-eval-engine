@@ -303,13 +303,26 @@ def _generate_one_plan(
         _meas = sr.tof_result.measured_mg_L
         _dl_rel = "above" if _meas > NOVEM_TOF_DL_MG_L else "below"
         if sr.tof_result.unknown_pfas_flag:
-            external_tof_needed = True
-            external_tof = (
-                f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
-                f"{_dl_rel} the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm). "
-                f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%) — "
-                "significant unknown PFAS. Send raw water to Novem for further identification (TOP assay)."
-            )
+            if _meas > NOVEM_TOF_DL_MG_L:
+                external_tof_needed = True
+                external_tof = (
+                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
+                    f"above the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm). "
+                    f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%) — "
+                    "significant unknown PFAS. Send raw water to Novem for further identification (TOP assay)."
+                )
+            else:
+                # Unknown PFAS present, but the level is below what Novem can quantify —
+                # sending would return non-detects and waste the submission.
+                external_tof_needed = False
+                external_tof = (
+                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
+                    f"below the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm), so Novem "
+                    "would not be able to quantify it — do NOT send. "
+                    f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%): "
+                    "the unknown-PFAS risk remains — track it through treatment performance "
+                    "testing (targeted panel before/after) instead of external TOF."
+                )
         else:
             external_tof_needed = False
             external_tof = (
@@ -333,6 +346,10 @@ def _generate_one_plan(
                 f"{format_conc_auto(theo_tof)} as F — below the Novem detection limit "
                 f"({NOVEM_TOF_DL_MG_L:.0f} ppm); external TOF would not be informative."
             )
+
+    # Fluoride submission guidance only applies when a Novem submission is proposed
+    if not external_tof_needed:
+        fluoride_handling = ""
 
     return TestPlan(
         sample_name=sr.sample_name,
