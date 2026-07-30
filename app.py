@@ -246,10 +246,12 @@ st.markdown(
         border-bottom: 1px solid #F0F0F2;
     }
 
-    /* ── Flag rows ────────────────────────────────────────────── */
+    /* ── Flag rows — uniform geometry for ALL colored blocks ──── */
+    /* One standard: 12px 16px padding, 10px radius, 4px left border,
+       no extra margins — vertical rhythm comes from Streamlit's uniform gap. */
     .flag-row {
-        padding: 13px 18px; border-radius: 10px;
-        margin-bottom: 10px; font-size: 0.86rem; line-height: 1.65;
+        padding: 12px 16px; border-radius: 10px;
+        margin: 0; font-size: 0.86rem; line-height: 1.6;
         color: #1D1D1F !important;
     }
     .flag-critical        { background: #FFF1F2; border-left: 4px solid #FF3B30; }
@@ -721,8 +723,8 @@ def _render_sample_section(
                     f"reported {tof.measured_type} — good coverage, low unknown-PFAS risk."
                 )
             st.markdown(
-                f'<div style="background:{_tof_bg}; border:1px solid {_tof_border}; '
-                f'border-radius:10px; padding:10px 16px; margin:8px 0; font-size:0.85rem;">'
+                f'<div style="background:{_tof_bg}; border-left:4px solid {_tof_border}; '
+                f'border-radius:10px; padding:12px 16px; margin:0; font-size:0.86rem; line-height:1.6;">'
                 f'{_tof_icon} <strong>TOF/AOF Coverage:</strong> '
                 f'Theoretical TOF {format_conc_auto(tof.theoretical_tof_mg_L)} as F &nbsp;|&nbsp; '
                 f'Reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)} as F &nbsp;|&nbsp; '
@@ -731,7 +733,6 @@ def _render_sample_section(
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
         # ── M1 flags (e.g. MAX-UNKNOWN) ───────────────────────────────────────
         for f in m1.flags:
@@ -1050,20 +1051,20 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         for reason in result.status_reasons:
             st.markdown(f"- {reason}")
 
-    # ── Variability Banner ────────────────────────────────────────────────────
+    # ── Variability Banner (uniform block geometry: 12/16 pad, 4px left border)
     if result.variability_flag:
         vf = result.variability_flag
         if vf.severity == "info":
             # Stat-range note (Average + Maximum from same stream)
-            _vbg  = "#EFF6FF"; _vborder = "#BFDBFE"; _vcolor = "#1E40AF"
+            _vbg  = "#F0F5FF"; _vaccent = "#007AFF"; _vcolor = "#1E40AF"
             _vicon = "🔵"; _vkey = vf.rule_id
         else:
             # True high-variability warning
-            _vbg  = "#FFF8EC"; _vborder = "#FFCC00"; _vcolor = "#5C3D00"
+            _vbg  = "#FFFBEB"; _vaccent = "#FF9500"; _vcolor = "#5C3D00"
             _vicon = "🟡"; _vkey = "M1-VAR"
         st.markdown(
-            f'<div style="background:{_vbg}; border:1px solid {_vborder}; border-radius:10px; '
-            f'padding:12px 18px; font-size:0.86rem; color:{_vcolor}; margin:10px 0;">'
+            f'<div style="background:{_vbg}; border-left:4px solid {_vaccent}; border-radius:10px; '
+            f'padding:12px 16px; font-size:0.86rem; line-height:1.6; color:{_vcolor}; margin:0;">'
             f'{_vicon} <strong>[{_vkey}]</strong> '
             f'{vf.message}<br>'
             f'<span style="font-size:0.80rem; opacity:0.75;">{vf.detail}</span>'
