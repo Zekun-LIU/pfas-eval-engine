@@ -292,38 +292,46 @@ def _generate_one_plan(
     fluoride_handling = ""
     if fluoride is not None and fluoride > FLUORIDE_HANDLING_MG_L:
         fluoride_handling = (
-            f"High fluoride background ({fluoride:.0f} mg/L): when submitting to Novem, report the "
-            "fluoride background; keep the sample at pH > 12 throughout — never acidic (prevents HF)."
+            f"High inorganic fluoride background ({fluoride:.0f} mg/L): report this to Novem — "
+            "they must pretreat the sample to remove background fluoride before TOF analysis. "
+            "Keep the sample at pH > 12 throughout — never acidic (prevents HF formation)."
         )
 
     tof_reported = sr.tof_result is not None
     theo_tof = _theoretical_tof_mg_L(sr)
     if tof_reported:
+        _meas = sr.tof_result.measured_mg_L
+        _dl_rel = "above" if _meas > NOVEM_TOF_DL_MG_L else "below"
         if sr.tof_result.unknown_pfas_flag:
             external_tof_needed = True
             external_tof = (
-                f"Reported {sr.tof_result.measured_type} coverage "
-                f"{sr.tof_result.coverage_ratio * 100:.0f}% (< 50%) — significant unknown PFAS. "
-                "Send raw water to Novem for further identification (TOP assay / HRMS)."
+                f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
+                f"{_dl_rel} the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm). "
+                f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%) — "
+                "significant unknown PFAS. Send raw water to Novem for further identification (TOP assay)."
             )
         else:
             external_tof_needed = False
             external_tof = (
-                f"Reported {sr.tof_result.measured_type} adequately covered by identified species "
+                f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F "
+                f"({_dl_rel} the Novem detection limit of {NOVEM_TOF_DL_MG_L:.0f} ppm). "
+                f"Adequately covered by identified species "
                 f"({sr.tof_result.coverage_ratio * 100:.0f}%) — external TOF not required."
             )
     else:
         if theo_tof > NOVEM_TOF_DL_MG_L:
             external_tof_needed = True
             external_tof = (
-                f"No customer TOF/AOF; expected TOF {format_conc_auto(theo_tof)} as F "
-                f"> {NOVEM_TOF_DL_MG_L:.0f} ppm detection limit — send raw water to Novem for TOF."
+                f"No customer TOF/AOF reported. Expected TOF from identified species: "
+                f"{format_conc_auto(theo_tof)} as F — above the Novem detection limit "
+                f"({NOVEM_TOF_DL_MG_L:.0f} ppm). Send raw water to Novem for TOF."
             )
         else:
             external_tof_needed = False
             external_tof = (
-                f"No customer TOF/AOF; expected TOF {format_conc_auto(theo_tof)} as F "
-                f"< {NOVEM_TOF_DL_MG_L:.0f} ppm detection limit — external TOF not informative."
+                f"No customer TOF/AOF reported. Expected TOF from identified species: "
+                f"{format_conc_auto(theo_tof)} as F — below the Novem detection limit "
+                f"({NOVEM_TOF_DL_MG_L:.0f} ppm); external TOF would not be informative."
             )
 
     return TestPlan(
