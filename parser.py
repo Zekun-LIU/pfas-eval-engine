@@ -1718,8 +1718,18 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
             if m:
                 try:
                     val = float(m.group(1).replace(",", ""))
+                    # Normalize as-N nitrogen values to as-ion (engine thresholds
+                    # and reagent stoichiometry all assume as-ion mg/L)
+                    if pat_unit == "mg/L-N":
+                        factor = {"nitrate": 4.43, "NO2": 3.29}.get(param, 1.0)
+                        val = val * factor
+                        logs.append(
+                            f"[Text] Matrix param: {param} = {val:.2f} mg/L as ion "
+                            f"(converted from as-N ×{factor})"
+                        )
+                    else:
+                        logs.append(f"[Text] Matrix param: {param} = {val} {pat_unit}")
                     matrix[param] = val
-                    logs.append(f"[Text] Matrix param: {param} = {val} {pat_unit}")
                     break
                 except (ValueError, IndexError):
                     pass

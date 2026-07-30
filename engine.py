@@ -686,18 +686,10 @@ _PARAM_UNITS = {
 }
 
 
-def _no3_as_ion(val: float, label: str) -> float:
-    """Convert nitrate-as-N to nitrate-as-ion if needed (spec: NO3_asN * 4.43)."""
-    if label == "mg/L-N":
-        return val * 4.43
-    return val
-
-
-def _no2_as_ion(val: float, label: str) -> float:
-    """Convert nitrite-as-N to nitrite-as-ion if needed (spec: NO2_asN * 3.29)."""
-    if label == "mg/L-N":
-        return val * 3.29
-    return val
+# NOTE: as-N → as-ion normalization (NO3-N ×4.43, NO2-N ×3.29) happens at the
+# PARSER layer (parser.py text patterns; llm_parser.py unit-string detection).
+# All values in matrix_params are therefore as-ion mg/L by the time they reach
+# this module — M3_R2 thresholds and Module 4 stoichiometry rely on that.
 
 
 def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
@@ -810,7 +802,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
     no3_raw = detected.get("nitrate")
     no2_raw = detected.get("NO2")
 
-    # Convert as-N values if stored with unit tag
+    # Values arrive as-ion mg/L (as-N normalized upstream at the parser layer)
     no3_val = float(no3_raw) if no3_raw is not None else None
     no2_val = float(no2_raw) if no2_raw is not None else None
 

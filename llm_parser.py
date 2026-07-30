@@ -568,6 +568,21 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
         except (ValueError, TypeError):
             continue
 
+        # Nitrate/nitrite reported as-N ("mg/L as N", "mg-N/L", "NO3-N") →
+        # convert to as-ion BEFORE magnitude scaling. Engine thresholds and
+        # sulfite stoichiometry (Module 4) all assume as-ion mg/L.
+        if canonical_key in ("nitrate", "NO2"):
+            _u_norm = u.lower().replace(" ", "").replace("–", "-")
+            if ("asn" in _u_norm) or ("-n" in _u_norm) or re.search(r"(?<![a-z])n/l", _u_norm):
+                _f = 4.43 if canonical_key == "nitrate" else 3.29
+                v_float *= _f
+                # Strip the as-N token but keep the magnitude unit (µg/L vs mg/L)
+                u = re.sub(r"(?i)\bas\s*n\b|[-–]\s*n\b", "", u).strip(" -–") or "mg/L"
+                result.llm_parse_notes.append(
+                    f"{llm_key} reported as-N — converted ×{_f} to as-ion "
+                    f"({v_float:g} {u})"
+                )
+
         if canonical_key in _NATIVE_UNIT_PARAMS:
             result.matrix_params[canonical_key] = v_float
         else:
