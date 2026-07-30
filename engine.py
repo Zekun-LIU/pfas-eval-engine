@@ -13,6 +13,7 @@ Claros R&D Team | Framework Architecture by Zack Liu
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -199,6 +200,8 @@ class EvaluationResult:
     variability_ratio: Optional[float]
     variability_flag: Optional[FlagItem]
     tof_results: List[TOFAnalysisResult] = field(default_factory=list)
+    # AN-1: ultra-low target / drinking-water analytical feasibility flag
+    analytical_flag: Optional[FlagItem] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1167,6 +1170,98 @@ def _compute_variability(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# AN-1 — ANALYTICAL FEASIBILITY CHECK  (ultra-low target / drinking water)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ANALYTICAL_TARGET_NG_L = 10.0   # single-digit-ppt regime threshold (per compound OR total)
+
+_DW_PATTERNS = [
+    "drinking water", "potable", "tap water", "eau potable", "trinkwasser",
+    "maximum contaminant level", "ucmr", "饮用水",
+]
+
+
+def _check_analytical_target(
+    goals_text: str,
+    notes_text: str,
+    worst_total_mg_L: Optional[float],
+) -> Optional[FlagItem]:
+    """
+    AN-1 — flags the analytical challenge when the treatment target sits in the
+    single-digit-ppt regime. Triggers when any of:
+      (a) goals/notes reference a drinking-water standard (regardless of value),
+      (b) an explicit effluent target < 10 ng/L (ppt) appears — per compound or total,
+      (c) a destruction-% goal implies effluent < 10 ng/L from worst-case influent.
+    """
+    text = f"{goals_text}\n{notes_text}".lower()
+    if not text.strip():
+        return None
+
+    triggers: List[str] = []
+
+    # (a) drinking-water context
+    if any(p in text for p in _DW_PATTERNS) or re.search(r"\bmcls?\b", text):
+        triggers.append("drinking-water standard referenced")
+
+    # (b) explicit numeric target < 10 ng/L (ppt = ng/L; ppb/µg/L ×1000; ppq ÷1000)
+    low_vals: List[float] = []
+    for m in re.finditer(
+        r"(\d+(?:\.\d+)?)\s*(ppt|ppq|ppb|ng\s*/\s*l|µg\s*/\s*l|ug\s*/\s*l)", text
+    ):
+        v = float(m.group(1))
+        u = m.group(2).replace(" ", "")
+        if u in ("ppb", "µg/l", "ug/l"):
+            v *= 1000.0
+        elif u == "ppq":
+            v /= 1000.0
+        if v < ANALYTICAL_TARGET_NG_L:
+            low_vals.append(v)
+    if low_vals:
+        triggers.append(
+            f"explicit target {min(low_vals):g} ng/L is below {ANALYTICAL_TARGET_NG_L:g} ppt"
+        )
+
+    # (c) destruction-% goal → implied effluent from worst-case influent
+    if (
+        worst_total_mg_L
+        and worst_total_mg_L > 0
+        and re.search(r"(destruct|removal|remove|reduc)", text)
+    ):
+        pcts = [
+            float(p) for p in re.findall(r"(\d{2,3}(?:\.\d+)?)\s*%", text)
+            if float(p) < 100.0
+        ]
+        if pcts:
+            implied_ng_L = worst_total_mg_L * (1.0 - max(pcts) / 100.0) * 1e6
+            if implied_ng_L < ANALYTICAL_TARGET_NG_L:
+                triggers.append(
+                    f"{max(pcts):g}% destruction of worst-case influent implies "
+                    f"effluent ≈ {implied_ng_L:.1f} ng/L"
+                )
+
+    if not triggers:
+        return None
+
+    return FlagItem(
+        severity="warning",
+        rule_id="AN-1",
+        message=(
+            "Ultra-low treatment target — " + "; ".join(triggers) + ". "
+            "Analytical verification at single-digit-ppt levels is a project constraint."
+        ),
+        detail=(
+            "Quantifying treatment performance below 10 ppt approaches the limits of "
+            "standard LC-MS/MS methods (current EPA drinking-water MCL: 4 ppt for PFOA/PFOS). "
+            "(1) Confirm BEFORE testing that the analytical provider has demonstrated "
+            "capability at the required reporting limits. "
+            "(2) Budget an additional 2–3 weeks over the standard treatability timeline — "
+            "significant effort is required for contamination control "
+            "(PFAS-free sampling materials, field/lab blanks, background verification)."
+        ),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OVERALL STATUS (spec: final_status_logic)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1175,6 +1270,7 @@ def _determine_status(
     module3: Module3Result,
     variability_flag: Optional[FlagItem],
     has_pfas_data: bool,
+    analytical_flag: Optional[FlagItem] = None,
 ) -> Tuple[str, List[str]]:
     """
     Spec final_status_logic:
@@ -1215,6 +1311,13 @@ def _determine_status(
         reasons += warning_flags[:3]
         if module3.missing_required_params:
             reasons.append(f"Required matrix data missing: {', '.join(module3.missing_required_params)}")
+        if analytical_flag is not None:
+            reasons.append(analytical_flag.message)
+        return "CONDITIONAL", reasons
+
+    # AN-1: ultra-low target — analytical feasibility constraint
+    if analytical_flag is not None:
+        reasons.append(analytical_flag.message)
         return "CONDITIONAL", reasons
 
     # Variability
@@ -1346,6 +1449,10 @@ def _generate_email_draft(data: dict) -> str:
         if f.severity == "warning" and f.message not in seen_f:
             key_flags.append(f"  • [MATRIX] {f.message}")
             seen_f.add(f.message)
+    an_flag: Optional[FlagItem] = data.get("analytical_flag")
+    if an_flag is not None and an_flag.message not in seen_f:
+        key_flags.append(f"  • [ANALYTICAL] {an_flag.message}")
+        seen_f.add(an_flag.message)
 
     status_note = {
         "PROCEED":     "No critical treatment barriers identified. Standard evaluation pathway applicable.",
@@ -1653,9 +1760,20 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
             ))
             logs.append(f"[PROJ] COMMERCIAL flag raised — throughput {_throughput_gpm:.0f} GPM > 100 GPM threshold")
 
+    # ── AN-1: analytical feasibility (ultra-low target / drinking water) ─────
+    _worst_total = max(
+        (sr.module1.total_conc_mg_L for sr in sample_results), default=None
+    )
+    analytical_flag = _check_analytical_target(
+        parsed.treatment_goals_text, parsed.customer_notes_text, _worst_total
+    )
+    if analytical_flag is not None:
+        logs.append(f"[AN-1] Ultra-low target detected: {analytical_flag.message}")
+
     # ── Overall status ────────────────────────────────────────────────────────
     overall_status, status_reasons = _determine_status(
-        sample_results, module3, variability_flag, parsed.has_pfas_data
+        sample_results, module3, variability_flag, parsed.has_pfas_data,
+        analytical_flag=analytical_flag,
     )
     logs.append(f"[Engine] Overall: {overall_status}")
 
@@ -1671,6 +1789,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         "data_sources":     data_sources,
         "goals_text":       parsed.treatment_goals_text,
         "variability_flag": variability_flag,
+        "analytical_flag":  analytical_flag,
     })
 
     logs.append("=== Engine complete ===")
@@ -1689,4 +1808,5 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         variability_ratio=variability_ratio,
         variability_flag=variability_flag,
         tof_results=tof_results,
+        analytical_flag=analytical_flag,
     )

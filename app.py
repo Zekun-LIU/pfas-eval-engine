@@ -141,6 +141,11 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
             lines.append(f"  [MATRIX/PROJ] {f.message}")
             seen.add(f.message)
 
+    if getattr(result, "analytical_flag", None):
+        lines.append("\nANALYTICAL CONSTRAINT:")
+        lines.append(f"  [WARNING] {result.analytical_flag.message}")
+        lines.append(f"  {result.analytical_flag.detail}")
+
     lines.append("\nTREATMENT IMPLICATIONS:")
     for item in result.treatment_summary[:5]:
         lines.append(f"  - {item}")
@@ -173,6 +178,9 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         "- If CRITICAL flag exists, lead with it in the opening.\n"
         "- If TOF coverage is low (<50%), name it as a key risk: unknown PFAS cannot be "
         "guaranteed to be treated.\n"
+        "- If an ANALYTICAL CONSTRAINT is present (ultra-low / drinking-water target), state "
+        "it clearly: analytical capability must be confirmed before testing, and the "
+        "treatability timeline extends 2–3 weeks for contamination control.\n"
         "- If throughput >100 GPM, call out the large-scale flag explicitly.\n"
         "- Return ONLY the email text — no markdown fencing, no preamble."
     )
@@ -936,6 +944,15 @@ def _build_text_report(result: EvaluationResult) -> str:
         "",
     ]
 
+    if getattr(result, "analytical_flag", None):
+        af = result.analytical_flag
+        lines += [
+            "ANALYTICAL FEASIBILITY:",
+            f"  [{af.severity.upper()}][{af.rule_id}] {af.message}",
+            f"    → {af.detail}",
+            "",
+        ]
+
     if result.missing_info:
         lines += [
             "MISSING / REQUIRED INFORMATION:",
@@ -1055,6 +1072,12 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         )
     elif result.variability_ratio is not None:
         st.caption(f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)")
+
+    # ── Analytical Feasibility (AN-1: ultra-low target / drinking water) ─────
+    if getattr(result, "analytical_flag", None):
+        st.markdown('<div class="section-header">Analytical Feasibility</div>',
+                    unsafe_allow_html=True)
+        _render_flag(result.analytical_flag)
 
     # ── Project Context (throughput, site, customer) ─────────────────────────
     if parsed and parsed.llm_project_context:

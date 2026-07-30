@@ -23,13 +23,13 @@ PFAS_SPECIES_DB: Dict[str, Dict[str, Any]] = {
     "TFMS":          {"full_name": "Trifluoromethanesulfonic acid (triflate)",           "chain": 1,  "group": "sulfonate",           "category": "ultra_short"},
     "TFSI":          {"full_name": "Bis(trifluoromethylsulfonyl)imide",                 "chain": 1,  "group": "imide",               "category": "ultra_short"},
     "PFPrA":         {"full_name": "Perfluoropropanoic acid",                           "chain": 3,  "group": "carboxylate",         "category": "ultra_short"},
-    "PFPrS":         {"full_name": "Perfluoropropane sulfonic acid",                    "chain": 3,  "group": "sulfonate",           "category": "ultra_short"},
+    "PFPrS":         {"full_name": "Perfluoropropane sulfonic acid",                    "chain": 3,  "group": "sulfonate",           "category": "short_chain"},
 
     # ── Short-chain carboxylates (C4–C7) ────────────────────────────────────
     "PFBA":          {"full_name": "Perfluorobutanoic acid",                            "chain": 4,  "group": "carboxylate",         "category": "short_chain"},
     "PFPeA":         {"full_name": "Perfluoropentanoic acid",                           "chain": 5,  "group": "carboxylate",         "category": "short_chain"},
-    "PFHxA":         {"full_name": "Perfluorohexanoic acid",                            "chain": 6,  "group": "carboxylate",         "category": "short_chain"},
-    "PFHpA":         {"full_name": "Perfluoroheptanoic acid",                           "chain": 7,  "group": "carboxylate",         "category": "short_chain"},
+    "PFHxA":         {"full_name": "Perfluorohexanoic acid",                            "chain": 6,  "group": "carboxylate",         "category": "long_chain"},
+    "PFHpA":         {"full_name": "Perfluoroheptanoic acid",                           "chain": 7,  "group": "carboxylate",         "category": "long_chain"},
 
     # ── Long-chain carboxylates (C8+) ───────────────────────────────────────
     "PFOA":          {"full_name": "Perfluorooctanoic acid",                            "chain": 8,  "group": "carboxylate",         "category": "long_chain"},
@@ -42,7 +42,7 @@ PFAS_SPECIES_DB: Dict[str, Dict[str, Any]] = {
 
     # ── Short-chain sulfonates / PFSA (C4–C5) ───────────────────────────────
     "PFBS":          {"full_name": "Perfluorobutane sulfonic acid",                     "chain": 4,  "group": "sulfonate",           "category": "short_chain"},
-    "PFPeS":         {"full_name": "Perfluoropentane sulfonic acid",                    "chain": 5,  "group": "sulfonate",           "category": "short_chain"},
+    "PFPeS":         {"full_name": "Perfluoropentane sulfonic acid",                    "chain": 5,  "group": "sulfonate",           "category": "long_chain"},
 
     # ── Long-chain sulfonates / PFSA (C6+) ──────────────────────────────────
     "PFHxS":         {"full_name": "Perfluorohexane sulfonic acid",                     "chain": 6,  "group": "sulfonate",           "category": "long_chain"},
@@ -90,10 +90,15 @@ PFAS_SPECIES_DB: Dict[str, Dict[str, Any]] = {
 }
 
 # Human-readable category labels
+# Chain-length classes for fully fluorinated PFAS (PFCA / PFSA) are defined by
+# PERFLUORINATED carbon count (carboxyl carbon is not perfluorinated):
+#   ultrashort ≤ 2 · short 3–4 · long > 4
+# Telomers, ethers and precursors are NOT classified by chain length — their
+# reactivity is governed by other structural features.
 CATEGORY_LABELS: Dict[str, str] = {
-    "ultra_short": "Ultra-Short-Chain (≤C3)",
-    "short_chain": "Short-Chain (C4–C7 carboxylate / C4–C5 sulfonate)",
-    "long_chain":  "Long-Chain (C8+ carboxylate / C6+ sulfonate)",
+    "ultra_short": "Ultrashort-Chain (≤2 perfluorinated C)",
+    "short_chain": "Short-Chain (3–4 perfluorinated C)",
+    "long_chain":  "Long-Chain (>4 perfluorinated C)",
     "precursor":   "Precursor / Transformation Product",
     "emerging":    "Emerging / Non-Standard",
     "unknown":     "Unclassified",
