@@ -17,10 +17,11 @@ Claros R&D Team | Framework Architecture by Zack Liu
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from utils import get_pfas_f_fraction, is_pfca_only, format_conc_auto
+from utils import get_pfas_f_fraction, get_pfas_info, is_pfca_only, format_conc_auto
 from engine import EvaluationResult, SampleResult, Module3Result
 from parser import ParsedData
 
@@ -57,6 +58,12 @@ FLUORIDE_HANDLING_MG_L = 100.0   # high fluoride → Novem background note + pH>
 
 THROUGHPUT_HIGH_GPM        = 100.0   # ≥ this → prefer short / dense-first sampling
 THROUGHPUT_DILUTION_MAX_GPM = 1.0    # > this → never propose dilution
+
+# Fluorotelomers (FTOH / FTCA / FTAB / FTS / FTSA) degrade through a multi-step
+# transformation cascade (FTOH → FTCA → PFCA) — slow-kinetics behaviour.
+# ≥ this % of total PFAS → long schedule + oxidation-then-reduction pretreatment note.
+TELOMER_KINETICS_PCT   = 10.0
+TKN_OXIDATION_CAUTION  = 10.0   # mg/L — aligned with engine M3_R7
 
 COD_MAX_MG_L           = 250.0   # aligned with engine M3_R1
 TSS_FILTER_MG_L        = 50.0    # solids → filtration (assumption, adjustable)
@@ -114,6 +121,31 @@ def _r4_triggered(sr: SampleResult) -> bool:
 def _has_fast_species(sr: SampleResult) -> bool:
     """Any detected PFCA (fast-reacting) present."""
     return any(is_pfca_only([s.name]) for s in sr.module1.species if s.detected and s.conc_mg_L > 0)
+
+
+# Matches x:y telomer notation (5:3 FTCA, 6:2 FTSA, 6:2 FTAB…) and the word
+# "fluorotelomer" — catches telomer species even when absent from the DB.
+_TELOMER_NAME_RX = re.compile(r"\d+\s*:\s*\d+\s*FT|fluorotelomer", re.IGNORECASE)
+
+
+def _telomer_fraction_pct(sr: SampleResult) -> float:
+    """
+    Combined fluorotelomer fraction (% of total PFAS): FTOH / FTS / FTSA groups
+    plus any species whose name carries x:y telomer notation (FTCA, FTAB, …).
+    FTS/FTSA overlap with R4's PFSA% is intentional — this only asks
+    "are slow-cascade species present", double counting is harmless.
+    """
+    total = sr.module1.total_conc_mg_L
+    if total <= 0:
+        return 0.0
+    telo = 0.0
+    for s in sr.module1.species:
+        if not s.detected or s.conc_mg_L <= 0:
+            continue
+        group = get_pfas_info(s.name).get("group", "")
+        if group in ("FTOH", "FTS", "FTSA") or _TELOMER_NAME_RX.search(f"{s.name} {s.full_name}"):
+            telo += s.conc_mg_L
+    return telo / total * 100.0
 
 
 def _sulfite_base_mM(ppm: float) -> float:
@@ -202,8 +234,20 @@ def _generate_one_plan(
 
     # ── Sampling schedule ────────────────────────────────────────────────────
     r4 = _r4_triggered(sr)
+    telo_pct = _telomer_fraction_pct(sr)
+    telo_slow = telo_pct >= TELOMER_KINETICS_PCT
     fast = _has_fast_species(sr)
-    if not r4:
+
+    slow_reasons: List[str] = []
+    if r4:
+        slow_reasons.append("PFSA slow kinetics (R4)")
+    if telo_slow:
+        slow_reasons.append(
+            f"fluorotelomers {telo_pct:.0f}% of total PFAS — "
+            "transformation cascade (FTOH → FTCA → PFCA) requires extended observation"
+        )
+
+    if not slow_reasons:
         schedule_type = "short"
         timepoints = SHORT_TIMEPOINTS
         rationale = "No slow-reacting PFAS detected — standard short schedule (≤ 2 h)."
@@ -211,17 +255,18 @@ def _generate_one_plan(
         if fast or high_throughput:
             schedule_type = "long_dense"
             timepoints = LONG_DENSE_TIMEPOINTS
-            drivers = []
+            drivers = list(slow_reasons)
             if fast:
-                drivers.append("fast + slow PFAS mixture")
+                drivers.append("fast-reacting species also present")
             if high_throughput:
                 drivers.append(f"high throughput ({throughput:.0f} GPM)")
-            rationale = ("Slow-reacting PFAS present with " + " and ".join(drivers) +
+            rationale = ("Slow-reacting PFAS: " + "; ".join(drivers) +
                          " — long schedule (≤ 24 h) with dense sampling through the first 2 h.")
         else:
             schedule_type = "long"
             timepoints = LONG_TIMEPOINTS
-            rationale = "Slow-reacting PFAS (R4) — long schedule (≤ 24 h)."
+            rationale = ("Slow-reacting PFAS (" + "; ".join(slow_reasons) +
+                         ") — long schedule (≤ 24 h).")
 
     customer_requests: List[str] = []
     if throughput is None:
@@ -251,6 +296,22 @@ def _generate_one_plan(
             f"Colored sample ({color}) — raise pH to 12 with base; check for metal precipitation "
             "and colour removal."
         )
+
+    # Fluorotelomers → oxidation-then-reduction strategy
+    if telo_slow:
+        _oxred = (
+            f"Fluorotelomers {telo_pct:.0f}% of total PFAS — consider OXIDATION-then-REDUCTION: "
+            "an oxidative pretreatment step converts fluorotelomers to PFCA, which the reductive "
+            "system then destroys efficiently (collapses the slow transformation cascade)."
+        )
+        _tkn = _get_param(m3, "TKN")
+        if _tkn is not None and _tkn > TKN_OXIDATION_CAUTION:
+            _oxred += (
+                f" CAUTION: TKN {_tkn:.0f} mg/L > {TKN_OXIDATION_CAUTION:.0f} — oxidation may "
+                "convert organic nitrogen into nitrate/nitrite (treatment inhibitors); "
+                "confirm nitrogen speciation before applying the oxidative step."
+            )
+        pretreatment.append(_oxred)
 
     # ── COD handling + dilution ──────────────────────────────────────────────
     dilution = "None"
