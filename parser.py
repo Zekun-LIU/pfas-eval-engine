@@ -1581,7 +1581,7 @@ _MATRIX_PATTERNS: Dict[str, List[Tuple[str, str]]] = {
     # ── Nitrogen species ─────────────────────────────────────────────────────
     "ammonia": [
         (r"(?:NH3|NH4\+?|ammonia|ammonium)\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
-        (r"ammonia[-\s]*N\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
+        (r"ammonia[-\s]*N\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L-N"),
     ],
     "TKN": [
         (r"TKN\s*[=:~≈]\s*([0-9.]+)\s*(mg/[lL]|ppm)", "mg/L"),
@@ -1718,10 +1718,10 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
             if m:
                 try:
                     val = float(m.group(1).replace(",", ""))
-                    # Normalize as-N nitrogen values to as-ion (engine thresholds
-                    # and reagent stoichiometry all assume as-ion mg/L)
+                    # Normalize as-N nitrogen values to species form (engine thresholds
+                    # and reagent stoichiometry assume as-ion / as-molecule mg/L)
                     if pat_unit == "mg/L-N":
-                        factor = {"nitrate": 4.43, "NO2": 3.29}.get(param, 1.0)
+                        factor = {"nitrate": 4.43, "NO2": 3.29, "ammonia": 1.21}.get(param, 1.0)
                         val = val * factor
                         logs.append(
                             f"[Text] Matrix param: {param} = {val:.2f} mg/L as ion "
