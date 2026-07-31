@@ -1286,9 +1286,9 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
             st.markdown(f"*{plan.conditions[1].label}*")
             st.number_input("Sulfite — Reagent A (mM)", min_value=0.0, step=1.0,
                             value=float(plan.conditions[1].sulfite_mM), key=f"{k}_sB")
+            st.caption(plan.conditions[1].note)   # sulfite dose rationale — under sulfite
             st.number_input("Iodide — Reagent B (mM)", min_value=0.0, step=0.5,
                             value=float(plan.conditions[1].iodide_mM), key=f"{k}_iB")
-            st.caption(plan.conditions[1].note)
         else:
             st.markdown("*Water-adjusted condition*")
             st.caption("Equals the reference (no adjustment needed for this water).")
