@@ -2,7 +2,7 @@
 app.py — PFAS Material Evaluation Engine
 Streamlit web application entry point.
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 
 from __future__ import annotations
@@ -172,7 +172,7 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         "[Recommendation — 1 paragraph: PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED "
         "with specific reasoning]\n\n"
         "[Next Steps — 3 concrete action items]\n\n"
-        "Claros R&D Team | PFAS Evaluation Engine\n\n"
+        "Claros Product Development Team | PFAS Evaluation Engine\n\n"
         "RULES:\n"
         "- Use actual species names and concentrations from the data — never invent numbers.\n"
         "- If CRITICAL flag exists, lead with it in the opening.\n"
@@ -985,7 +985,7 @@ def _build_text_report(result: EvaluationResult) -> str:
     lines = [
         "=" * 70,
         "PFAS MATERIAL EVALUATION ENGINE — TECHNICAL REPORT",
-        "Claros R&D Team  |  Framework Architecture by Zack Liu",
+        "Claros Product Development Team  |  Framework Architecture by Zack Liu",
         f"Generated: {date.today().strftime('%B %d, %Y')}",
         "=" * 70,
         "",
@@ -1079,7 +1079,7 @@ def _build_text_report(result: EvaluationResult) -> str:
         "",
         "=" * 70,
         "PFAS Evaluation Engine v1.0",
-        "Claros R&D Team  |  Framework Architecture by Zack Liu",
+        "Claros Product Development Team  |  Framework Architecture by Zack Liu",
         "=" * 70,
     ]
     return "\n".join(lines)
@@ -1433,7 +1433,7 @@ def _plan_export_from_state(plan: "TestPlan", idx: int) -> str:
         lines += ["", "OPTIMIZATION (later stage)", *[f"  - {n}" for n in plan.optimization_notes]]
     if plan.customer_info_requests:
         lines += ["", "CONFIRM WITH CUSTOMER", *[f"  - {n}" for n in plan.customer_info_requests]]
-    lines += ["", "=" * 66, "Claros R&D Team  |  Bench Test Plan (POC)", "=" * 66]
+    lines += ["", "=" * 66, "Claros Product Development Team  |  Bench Test Plan (POC)", "=" * 66]
     return "\n".join(lines)
 
 
@@ -1488,7 +1488,7 @@ st.markdown(
     <div class="pfas-header">
         <h1>PFAS Material Evaluation Engine</h1>
         <div class="subtitle">Claros Product Development &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
-        <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
+        <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal Product Development Use Only</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1904,9 +1904,9 @@ with tab_debug:
 st.markdown(
     """
     <div class="pfas-footer">
-        PFAS Evaluation Engine v1.0 &nbsp;|&nbsp; Claros R&amp;D Team &nbsp;|&nbsp;
+        PFAS Evaluation Engine v1.0 &nbsp;|&nbsp; Claros Product Development Team &nbsp;|&nbsp;
         Framework Architecture by Zack Liu &nbsp;|&nbsp;
-        For internal R&amp;D screening use only — not a substitute for detailed engineering design.
+        For internal Product Development screening use only — not a substitute for detailed engineering design.
     </div>
     """,
     unsafe_allow_html=True,

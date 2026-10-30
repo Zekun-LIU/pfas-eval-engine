@@ -5,7 +5,7 @@ numeric parsing, display formatting, and species classification helpers.
 
 Updated to align with PFAS_Material_Intelligence_Engine spec v1.0.
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 
 from __future__ import annotations

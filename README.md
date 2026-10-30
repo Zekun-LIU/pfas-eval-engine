@@ -1,9 +1,9 @@
 # PFAS Material Evaluation Engine
 
-**Claros R&D Team** | Framework Architecture by Zack Liu | v1.0
+**Claros Product Development Team** | Framework Architecture by Zack Liu | v1.0
 
 A deterministic, rule-based expert system for preliminary PFAS treatment feasibility screening.
-This is an internal R&D decision tool — not a chatbot or generic AI demo.
+This is an internal Product Development decision tool — not a chatbot or generic AI demo.
 
 ---
 
@@ -167,4 +167,4 @@ Display uses auto-scaling (ng/L / µg/L / mg/L) based on magnitude.
 ## Version
 
 `v1.0` — Initial internal release
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu

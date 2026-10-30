@@ -13,7 +13,7 @@ optimization sweep. Each plan therefore proposes two conditions:
 
 All outputs are recommendations — the UI renders them as editable fields.
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from parser import ParsedData
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONSTANTS  (confirmed with Claros R&D)
+# CONSTANTS  (confirmed with Claros Product Development)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 IODIDE_MM_DEFAULT      = 2.0     # Reagent B — fixed for POC
@@ -500,6 +500,6 @@ def build_plan_text(plan: TestPlan) -> str:
     if plan.customer_info_requests:
         lines += ["", "CONFIRM WITH CUSTOMER", *[f"  - {n}" for n in plan.customer_info_requests]]
     lines += ["", "=" * 66,
-              "Claros R&D Team  |  Bench Test Plan (POC)  |  conditions are adjustable",
+              "Claros Product Development Team  |  Bench Test Plan (POC)  |  conditions are adjustable",
               "=" * 66]
     return "\n".join(lines)

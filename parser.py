@@ -4,7 +4,7 @@ Data ingestion layer: Excel PFAS tables, PDF lab reports, pasted text.
 
 Returns a unified ParsedData object that the engine can consume directly.
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 
 from __future__ import annotations

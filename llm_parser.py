@@ -13,7 +13,7 @@ Architecture:
     → parse_from_llm_json()
     → ParsedData  →  evaluate()  →  EvaluationResult
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 from __future__ import annotations
 

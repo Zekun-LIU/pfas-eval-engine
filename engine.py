@@ -8,7 +8,7 @@ Module 3: Water Matrix Screening              (M3_R1–M3_R5 per spec)
 
 All logic is deterministic. No ML. No generative inference.
 
-Claros R&D Team | Framework Architecture by Zack Liu
+Claros Product Development Team | Framework Architecture by Zack Liu
 """
 
 from __future__ import annotations
@@ -1499,7 +1499,7 @@ Please follow up with customer to obtain the above before proceeding.
 Preliminary screening only — not a substitute for detailed engineering design.
 Full technical output available on request.
 
-Claros R&D Team | PFAS Evaluation Engine v1.0
+Claros Product Development Team | PFAS Evaluation Engine v1.0
 """
     return email.strip()
 
