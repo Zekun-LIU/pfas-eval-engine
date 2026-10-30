@@ -100,14 +100,14 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         )
     if worst and worst.module1.total_conc_mg_L > 0:
         m1 = worst.module1
-        lines.append(f"\nPFAS PROFILE — WORST CASE ({worst.sample_name}):")
+        lines.append(f"\nPFAS PROFILE (WORST CASE: {worst.sample_name}):")
         lines.append(f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}")
         for s in m1.species[:6]:
             if s.detected:
                 lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)} ({s.percentage:.1f}%)")
         for cat, frac in sorted(m1.category_fractions.items(), key=lambda x: -x[1]):
             if frac > 0.01:
-                lines.append(f"  Category — {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}")
+                lines.append(f"  Category {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}")
         # TOF coverage
         if worst.tof_result is not None:
             tof = worst.tof_result
@@ -117,12 +117,12 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
                 f"reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)})"
             )
             if tof.unknown_pfas_flag:
-                lines.append("  ⚠️ LOW TOF COVERAGE — significant unknown/unidentified PFAS present")
+                lines.append("  ⚠️ LOW TOF COVERAGE: significant unknown/unidentified PFAS present")
 
         # Average case if available
         if worst.avg_module1 is not None:
             avg_m1 = worst.avg_module1
-            lines.append(f"\nPFAS PROFILE — AVERAGE / STEADY-STATE:")
+            lines.append(f"\nPFAS PROFILE (AVERAGE / STEADY-STATE):")
             lines.append(f"  Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}")
             for s in avg_m1.species[:4]:
                 if s.detected:
@@ -162,19 +162,19 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         "internal business email to your team about a PFAS treatment opportunity.\n\n"
         "Write a professional, clear email (280–380 words) grounded in the evaluation data.\n\n"
         "FORMAT:\n"
-        "Subject: PFAS Treatment Feasibility — [customer/site descriptor + status]\n\n"
-        "[Opening — 2 sentences: opportunity context, overall verdict]\n\n"
-        "[PFAS Profile — 3 sentences: key species with actual concentrations, composition "
+        "Subject: PFAS Treatment Feasibility: [customer/site descriptor + status]\n\n"
+        "[Opening, 2 sentences: opportunity context, overall verdict]\n\n"
+        "[PFAS Profile, 3 sentences: key species with actual concentrations, composition "
         "category, TOF coverage finding if relevant]\n\n"
-        "[Key Technical Findings — 4-6 bullet points drawn from the evaluation flags]\n\n"
-        "[Scale & Project Context — 1 short paragraph: throughput, any large-scale flag, "
+        "[Key Technical Findings, 4-6 bullet points drawn from the evaluation flags]\n\n"
+        "[Scale & Project Context, 1 short paragraph: throughput, any large-scale flag, "
         "site/country context]\n\n"
-        "[Recommendation — 1 paragraph: PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED "
+        "[Recommendation, 1 paragraph: PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED "
         "with specific reasoning]\n\n"
-        "[Next Steps — 3 concrete action items]\n\n"
+        "[Next Steps, 3 concrete action items]\n\n"
         "Claros Product Development Team | PFAS Evaluation Engine\n\n"
         "RULES:\n"
-        "- Use actual species names and concentrations from the data — never invent numbers.\n"
+        "- Use actual species names and concentrations from the data; never invent numbers.\n"
         "- If CRITICAL flag exists, lead with it in the opening.\n"
         "- If TOF coverage is low (<50%), name it as a key risk: unknown PFAS cannot be "
         "guaranteed to be treated.\n"
@@ -182,7 +182,8 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         "it clearly: analytical capability must be confirmed before testing, and the "
         "treatability timeline extends 2–3 weeks for contamination control.\n"
         "- If throughput >100 GPM, call out the large-scale flag explicitly.\n"
-        "- Return ONLY the email text — no markdown fencing, no preamble."
+        "- Do not use em dashes; use commas, colons, semicolons or full stops instead.\n"
+        "- Return ONLY the email text: no markdown fencing, no preamble."
     )
 
     try:
@@ -832,7 +833,7 @@ def _build_text_report(result: EvaluationResult) -> str:
 
     lines = [
         "=" * 70,
-        "PFAS MATERIAL EVALUATION ENGINE — TECHNICAL REPORT",
+        "PFAS MATERIAL EVALUATION ENGINE: TECHNICAL REPORT",
         "Claros Product Development Team  |  Framework Architecture by Zack Liu",
         f"Generated: {date.today().strftime('%B %d, %Y')}",
         "=" * 70,
@@ -867,7 +868,7 @@ def _build_text_report(result: EvaluationResult) -> str:
             f"SAMPLE: {sr.sample_name}  |  Status: {sr.sample_status}",
             "-" * 70,
             "",
-            "MODULE 1 — PFAS COMPOSITION ANALYSIS",
+            "MODULE 1: PFAS COMPOSITION ANALYSIS",
             f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}",
             f"  Primary Set (≥5%): {', '.join(str(n) for n in m1.primary_set) if m1.primary_set else 'None'}",
             "",
@@ -883,7 +884,7 @@ def _build_text_report(result: EvaluationResult) -> str:
                         f"{CATEGORY_LABELS.get(s.category, s.category)}{ps}"
                     )
         lines.append("")
-        lines.append("MODULE 2 — REACTIVITY SCREENING")
+        lines.append("MODULE 2: REACTIVITY SCREENING")
         for f in m2.flags:
             lines.append(f"  [{f.severity.upper()}][{f.rule_id}] {f.message}")
             if f.detail:
@@ -898,13 +899,13 @@ def _build_text_report(result: EvaluationResult) -> str:
                 f"  Theoretical TOF (from identified PFAS): {format_conc_auto(t.theoretical_tof_mg_L)} as F",
                 f"  Reported {t.measured_type}: {format_conc_auto(t.measured_mg_L)} as F",
                 f"  Coverage ratio: {t.coverage_ratio * 100:.1f}%",
-                f"  Unknown PFAS flag: {'YES — significant unknown PFAS likely present' if t.unknown_pfas_flag else 'No'}",
+                f"  Unknown PFAS flag: {'YES (significant unknown PFAS likely present)' if t.unknown_pfas_flag else 'No'}",
                 "",
             ]
 
     lines += [
         "-" * 70,
-        "MODULE 3 — WATER MATRIX SCREENING",
+        "MODULE 3: WATER MATRIX SCREENING",
         "-" * 70,
     ]
     if result.module3.detected_params:
@@ -1088,7 +1089,7 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
                 {
                     "Sample": name,
                     "Statistical Summary": "Yes" if m.is_statistical_summary else "No",
-                    "Type": m.summary_type or "—",
+                    "Type": m.summary_type or "n/a",
                 }
                 for name, m in parsed.sample_metadata.items()
             ]
@@ -1124,7 +1125,7 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
             )
 
         if parsed.nd_species:
-            st.markdown("**Non-Detect (ND) Species — Analyzed but Below Detection Limit:**")
+            st.markdown("**Non-detect (ND) species (analyzed but below detection limit):**")
             for sample, nd_list in parsed.nd_species.items():
                 st.info(f"Sample '{sample}': {', '.join(str(s) for s in nd_list)}")
 
@@ -1159,17 +1160,17 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
     cc1, cc2 = st.columns(2)
     with cc1:
         st.markdown(f"*{plan.conditions[0].label}*")
-        st.number_input("Sulfite — Reagent A (mM)", min_value=0.0, step=1.0,
+        st.number_input("Sulfite, reagent A (mM)", min_value=0.0, step=1.0,
                         value=float(plan.conditions[0].sulfite_mM), key=f"{k}_sA")
-        st.number_input("Iodide — Reagent B (mM)", min_value=0.0, step=0.5,
+        st.number_input("Iodide, reagent B (mM)", min_value=0.0, step=0.5,
                         value=float(plan.conditions[0].iodide_mM), key=f"{k}_iA")
     with cc2:
         if len(plan.conditions) > 1:
             st.markdown(f"*{plan.conditions[1].label}*")
-            st.number_input("Sulfite — Reagent A (mM)", min_value=0.0, step=1.0,
+            st.number_input("Sulfite, reagent A (mM)", min_value=0.0, step=1.0,
                             value=float(plan.conditions[1].sulfite_mM), key=f"{k}_sB")
             st.caption(plan.conditions[1].note)   # sulfite dose rationale — under sulfite
-            st.number_input("Iodide — Reagent B (mM)", min_value=0.0, step=0.5,
+            st.number_input("Iodide, reagent B (mM)", min_value=0.0, step=0.5,
                             value=float(plan.conditions[1].iodide_mM), key=f"{k}_iB")
         else:
             st.markdown("*Water-adjusted condition*")
@@ -1229,7 +1230,7 @@ def _plan_export_from_state(plan: "TestPlan", idx: int) -> str:
     sched = ss.get(f"{k}_sched", plan.schedule_type)
     lines = [
         "=" * 66,
-        f"BENCH TEST PLAN — {plan.sample_name}",
+        f"BENCH TEST PLAN: {plan.sample_name}",
         "750 mL Amazon Reactor  |  Proof-of-Concept stage",
         "=" * 66,
         f"Total PFAS: {format_conc_auto(plan.total_pfas_mg_L)}",
@@ -1497,7 +1498,7 @@ if run_clicked:
                     parts.append(f"[Attached {kind} PDF: {_name}]\n{_txt}")
                 else:
                     warnings.append(
-                        f"[Attachment] No readable text in '{_name}' — it may be a scanned "
+                        f"[Attachment] No readable text in '{_name}'; it may be a scanned "
                         "image. Copy the key text into the box instead."
                     )
             return "\n\n".join(parts)

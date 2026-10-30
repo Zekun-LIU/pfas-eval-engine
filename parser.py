@@ -205,7 +205,7 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
             result.errors.append(f"[Excel] Failed to open file: {e}")
             return result
 
-    logs.append(f"[Excel] '{filename}' — sheets: {list(sheets.keys())}")
+    logs.append(f"[Excel] '{filename}', sheets: {list(sheets.keys())}")
 
     # ── Try each sheet; keep the one with the most PFAS data ─────────────────
     best_result: Optional[ParsedData] = None
@@ -250,7 +250,7 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
             # arrive in a separate file — not a parse failure.
             result.warnings = [w for w in result.warnings if "PFAS data" not in w]
             logs.append(
-                f"[Excel] '{filename}': no PFAS results — read as water-quality data "
+                f"[Excel] '{filename}': no PFAS results; read as water-quality data "
                 f"({len(matrix_params)} parameter(s))"
             )
 
@@ -302,7 +302,7 @@ def _parse_transposed_excel_sheet(
     """
     result = ParsedData()
     logs.append(
-        f"[Excel] Sheet '{sheet_name}': TRANSPOSED LAYOUT detected — "
+        f"[Excel] Sheet '{sheet_name}': TRANSPOSED LAYOUT detected: "
         "PFAS species in row 0, samples in column A."
     )
 
@@ -474,7 +474,7 @@ def _parse_excel_sheet(
     col_a_preview = []
     for ri in range(min(30, len(df_raw))):
         col_a_preview.append(f"  row{ri+1}: {str(df_raw.iloc[ri, 0]).strip()!r}")
-    logs.append(f"[Excel] Sheet '{sheet_name}' — Col A preview:\n" + "\n".join(col_a_preview))
+    logs.append(f"[Excel] Sheet '{sheet_name}', col A preview:\n" + "\n".join(col_a_preview))
 
     for ri in range(len(df_raw)):
         cell_val = str(df_raw.iloc[ri, 0]).strip()
@@ -514,7 +514,7 @@ def _parse_excel_sheet(
         if wq_in_col_a >= 2 or wq_in_header >= 2:
             logs.append(
                 f"[Excel] Sheet '{sheet_name}': no PFAS analytes, water-quality parameters "
-                "found — treated as a water-quality sheet"
+                "found; treated as a water-quality sheet"
             )
             return result
 
@@ -661,7 +661,7 @@ def _parse_excel_sheet(
             and _keyword_match(_analyte_lower)
         ):
             logs.append(
-                f"[Excel] Row {ri + 1}: {analyte_raw!r} is a water-quality parameter — "
+                f"[Excel] Row {ri + 1}: {analyte_raw!r} is a water-quality parameter; "
                 "left to matrix extraction"
             )
             continue
@@ -1359,7 +1359,7 @@ def _extract_column_layout_matrix(
                 break
 
     if value_row is None:
-        logs.append(f"[Excel Matrix] '{sheet_name}': column-layout — no value row found")
+        logs.append(f"[Excel Matrix] '{sheet_name}': column layout: no value row found")
         return params
 
     logs.append(
@@ -1470,7 +1470,7 @@ def parse_pdf(file_bytes: bytes, filename: str) -> ParsedData:
                     logs.append(f"[PDF] Table extraction successful → {len(result.pfas_samples)} sample(s)")
                     return result
                 else:
-                    logs.append("[PDF] Table extraction yielded no PFAS data — falling back to text parsing")
+                    logs.append("[PDF] Table extraction yielded no PFAS data; falling back to text parsing")
 
             # Fall back to text parsing
             text_result = _parse_pdf_text(all_text_lines, unit, logs)
@@ -1479,7 +1479,7 @@ def parse_pdf(file_bytes: bytes, filename: str) -> ParsedData:
                 logs.append(f"[PDF] Text parsing → {len(result.pfas_samples)} sample(s)")
             elif result.matrix_params:
                 logs.append(
-                    f"[PDF] '{filename}': no PFAS results — read as water-quality data"
+                    f"[PDF] '{filename}': no PFAS results; read as water-quality data"
                 )
             else:
                 result.warnings.append(
@@ -1912,7 +1912,7 @@ def _rename_colliding_samples(
             if old in per_sample:
                 per_sample[new] = per_sample.pop(old)
         result.warnings.append(
-            f"[Parser] Sample '{old}' appears in more than one upload — "
+            f"[Parser] Sample '{old}' appears in more than one upload; "
             f"renamed to '{new}' to keep them separate."
         )
 

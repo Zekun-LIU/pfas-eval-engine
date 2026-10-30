@@ -433,7 +433,7 @@ def run_module2(
                 "Perfluoro(2-ethoxyethane) sulfonic acid (2+2 PFESA) is not treatable by "
                 "standard PFAS technologies. Its ether-sulfonate structure confers high resistance "
                 "to oxidative, reductive, and adsorptive treatment pathways. "
-                "Note: F-53B (which may co-occur) is a separate species — not classified as 2+2 PFESA."
+                "Note: F-53B (which may co-occur) is a separate species and is not classified as 2+2 PFESA."
             ),
         ))
         treatment_implications.append(
@@ -456,11 +456,11 @@ def run_module2(
             detail=(
                 "Trifluoroacetic acid (TFA) is a commercially significant PFAS target. "
                 "Claros has differentiated capability for TFA treatment. "
-                "This is a commercial opportunity — lead with TFA capability in customer discussions."
+                "This is a commercial opportunity: lead with TFA capability in customer discussions."
             ),
         ))
         treatment_implications.append(
-            "TFA detected — highlight Claros differentiated TFA treatment capability to customer."
+            "TFA detected: highlight Claros differentiated TFA treatment capability to customer."
         )
         operating_scenarios.append(
             "TFA treatment scenario: Confirm TFA concentration and target. "
@@ -537,7 +537,7 @@ def run_module2(
             detail=(
                 "HFPO-DA (GenX), ADONA, F-53B and similar ether-carboxylate PFAS do not trigger "
                 "a critical reactivity flag based on composition alone. "
-                "Monitor for treatment performance — some ether-PFAS may have different kinetics. "
+                "Monitor for treatment performance, as some ether-PFAS may have different kinetics. "
                 "If F-53B is present, note that it is NOT classified as 2+2 PFESA."
             ),
         ))
@@ -567,7 +567,7 @@ def run_module2(
                 message=(
                     f"FTOH detected as dominant fraction: {ftoh_conc_str}. "
                     f"FTOH accounts for {ftoh_total_pct:.1f}% of total PFAS. "
-                    "Status raised to CONDITIONAL — analytical verification required."
+                    "Status raised to CONDITIONAL: analytical verification required."
                 ),
                 detail=(
                     "x:2 Fluorotelomer alcohols (FTOHs) cannot be reliably analyzed by LC-MS/MS. "
@@ -588,10 +588,10 @@ def run_module2(
                 message=(
                     f"FTOH detected (minor fraction): {ftoh_conc_str} "
                     f"({ftoh_total_pct:.1f}% of total PFAS). "
-                    "Note: x:2 FTOH cannot be analyzed by LC-MS/MS — GC-MS recommended."
+                    "Note: x:2 FTOH cannot be analyzed by LC-MS/MS; GC-MS is recommended."
                 ),
                 detail=(
-                    "FTOH fraction <50% of total PFAS — evaluation proceeds without status change. "
+                    "FTOH fraction <50% of total PFAS, so the evaluation proceeds without status change. "
                     "Ensure GC-MS data is available for these species. "
                     "LC-MS/MS reported values for FTOH compounds may underestimate actual concentrations."
                 ),
@@ -613,7 +613,7 @@ def run_module2(
             detail="PFCA-only composition below concentration threshold. Standard treatment pathway applicable.",
         ))
         treatment_implications.append(
-            "PFCA-only composition with low total concentration — standard treatment applicable."
+            "PFCA-only composition with low total concentration; standard treatment applicable."
         )
         status = "PROCEED"
     elif not flags or all(f.severity in ("info", "ok") for f in flags):
@@ -756,7 +756,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
                     "and increase reagent consumption. "
                     "Pre-treatment (e.g., coagulation, sedimentation, biological pre-treatment) required. "
                     "Extend project timeline to approximately 8 weeks. "
-                    "NOTE: confirm the COD source — if it is methanol/ethanol, prior experience shows "
+                    "NOTE: confirm the COD source. If it is methanol/ethanol, prior experience shows "
                     "alcohols do not significantly affect treatment and the sample may proceed unchanged."
                 ),
             ))
@@ -764,7 +764,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
         else:
             flags.append(FlagItem(
                 severity="ok", rule_id="M3_R1",
-                message=f"Organics within acceptable range — COD: {cod:.0f} mg/L, TOC: {toc:.0f} mg/L.",
+                message=f"Organics within acceptable range: COD {cod:.0f} mg/L, TOC {toc:.0f} mg/L.",
             ))
     elif cod is not None:
         if cod > M3_COD_MAX_MG_L:
@@ -773,7 +773,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
                 message=f"COD high: {cod:.0f} mg/L > {M3_COD_MAX_MG_L:.0f} mg/L. Pretreatment likely required.",
                 detail=(
                     "Extend project timeline to ~8 weeks. Pretreatment design required. "
-                    "NOTE: confirm the COD source — if it is methanol/ethanol, prior experience shows "
+                    "NOTE: confirm the COD source. If it is methanol/ethanol, prior experience shows "
                     "alcohols do not significantly affect treatment and the sample may proceed unchanged."
                 ),
             ))
@@ -822,12 +822,12 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
         if worst_nitrogen < M3_NITRATE_MANAGEABLE:
             flags.append(FlagItem(
                 severity="ok", rule_id="M3_R2",
-                message=f"Nitrate/Nitrite competition impact manageable — {nitrogen_label} (< {M3_NITRATE_MANAGEABLE} mg/L).",
+                message=f"Nitrate/Nitrite competition impact manageable: {nitrogen_label} (< {M3_NITRATE_MANAGEABLE} mg/L).",
             ))
         elif worst_nitrogen <= M3_NITRATE_HIGH:
             flags.append(FlagItem(
                 severity="warning", rule_id="M3_R2",
-                message=f"Moderate nitrate/nitrite — {nitrogen_label}. Adjust reagent ratio to overcome inhibition.",
+                message=f"Moderate nitrate/nitrite: {nitrogen_label}. Adjust reagent ratio to overcome inhibition.",
                 detail=(
                     "Nitrogen species compete with PFAS in oxidative treatment systems. "
                     "At moderate levels (1–20 mg/L), reagent ratio adjustment is typically sufficient. "
@@ -838,7 +838,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
         else:
             flags.append(FlagItem(
                 severity="warning", rule_id="M3_R2",
-                message=f"High nitrate/nitrite — {nitrogen_label} (> {M3_NITRATE_HIGH} mg/L). Pretreatment required.",
+                message=f"High nitrate/nitrite: {nitrogen_label} (> {M3_NITRATE_HIGH} mg/L). Pretreatment required.",
                 detail=(
                     "High nitrogen loading will significantly inhibit PFAS oxidative treatment efficiency. "
                     "Electrochemical nitrate reduction or biological denitrification pre-treatment required "
@@ -905,20 +905,20 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
                 severity="warning", rule_id="M3_R6",
                 message=(
                     f"Ammonia/ammonium elevated: {nh3:.0f} mg/L > {M3_AMMONIA_HIGH:.0f} mg/L (tested range). "
-                    "Impact on process currently unknown — additional testing required."
+                    "Impact on process currently unknown; additional testing required."
                 ),
                 detail=(
                     f"Claros has tested ammonia/ammonium concentrations up to ~{M3_AMMONIA_HIGH:.0f} mg/L "
                     "without significant adverse effects on reaction performance. "
                     f"At {nh3:.0f} mg/L, the concentration is outside the experimentally validated range. "
-                    "This is not a Critical Concern — the opportunity may still proceed, "
+                    "This is not a Critical Concern; the opportunity may still proceed, "
                     "but bench-scale validation at this ammonia level is recommended before full-scale design."
                 ),
             ))
         else:
             flags.append(FlagItem(
                 severity="ok", rule_id="M3_R6",
-                message=f"Ammonia/ammonium {nh3:.0f} mg/L — within tested range (≤{M3_AMMONIA_HIGH:.0f} mg/L). No concern.",
+                message=f"Ammonia/ammonium {nh3:.0f} mg/L, within the tested range (≤{M3_AMMONIA_HIGH:.0f} mg/L). No concern.",
             ))
 
     # ── M3_R7: Total Kjeldahl Nitrogen (TKN) ─────────────────────────────────
@@ -939,7 +939,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
                     "Organic nitrogen can be oxidised into nitrate and nitrite under oxidative pretreatment conditions, "
                     "which may inhibit downstream PFAS treatment performance (see M3_R2). "
                     "As a precaution, avoid oxidative pretreatment approaches until nitrogen speciation is confirmed. "
-                    "This is a process consideration — evaluation may still proceed."
+                    "This is a process consideration; evaluation may still proceed."
                 ),
             ))
 
@@ -959,7 +959,7 @@ def run_module3(matrix_params: Dict[str, Any]) -> Module3Result:
             severity="warning", rule_id="M3_R8",
             message=(
                 f"Metal(s) above {M3_METAL_FLAG_PPM:.0f} mg/L threshold: {metal_str}. "
-                "May generate precipitates at pH 12 — engineering review recommended."
+                "May generate precipitates at pH 12; engineering review recommended."
             ),
             detail=(
                 "During caustic (NaOH) dosing for pH adjustment in treatment systems, pH can reach 12 or above. "
@@ -1084,7 +1084,7 @@ def run_tof_analysis(
                 f"Theoretical TOF from identified PFAS = {format_conc_auto(theo_tof)} as F "
                 f"({ratio * 100:.1f}% of reported {measured_type} "
                 f"{format_conc_auto(measured_val)} as F). "
-                "Significant unidentified PFAS species likely present — "
+                "Significant unidentified PFAS species are likely present; "
                 "consider expanded analytical scope."
             ),
             detail=(
@@ -1110,7 +1110,7 @@ def run_tof_analysis(
                 "Identified species adequately account for reported organic fluorine load."
             ),
             detail=(
-                f"Theoretical TOF ≥ {TOF_COVERAGE_THRESHOLD * 100:.0f}% of reported {measured_type} — "
+                f"Theoretical TOF ≥ {TOF_COVERAGE_THRESHOLD * 100:.0f}% of reported {measured_type}: "
                 "no significant unexplained fluorine fraction detected at this threshold."
             ),
         ))
@@ -1238,7 +1238,7 @@ def _check_analytical_target(
         severity="warning",
         rule_id="AN-1",
         message=(
-            "Ultra-low treatment target — " + "; ".join(triggers) + ". "
+            "Ultra-low treatment target: " + "; ".join(triggers) + ". "
             "Analytical verification at single-digit-ppt levels is a project constraint."
         ),
         detail=(
@@ -1246,7 +1246,7 @@ def _check_analytical_target(
             "standard LC-MS/MS methods (current EPA drinking-water MCL: 4 ppt for PFOA/PFOS). "
             "(1) Confirm BEFORE testing that the analytical provider has demonstrated "
             "capability at the required reporting limits. "
-            "(2) Budget an additional 2–3 weeks over the standard treatability timeline — "
+            "(2) Budget an additional 2–3 weeks over the standard treatability timeline, as "
             "significant effort is required for contamination control "
             "(PFAS-free sampling materials, field/lab blanks, background verification)."
         ),
@@ -1273,7 +1273,7 @@ def _determine_status(
     reasons: List[str] = []
 
     if not has_pfas_data and not sample_results:
-        reasons.append("No PFAS concentration data — assessment based on keyword/text only.")
+        reasons.append("No PFAS concentration data; assessment based on keyword/text only.")
         return "CONDITIONAL", reasons
 
     # Collect all critical flags from M2 (M1 and M3 don't produce CRITICAL in spec)
@@ -1448,14 +1448,14 @@ def _generate_email_draft(data: dict) -> str:
 
     status_note = {
         "PROCEED":     "No critical treatment barriers identified. Standard evaluation pathway applicable.",
-        "CONDITIONAL": "Conditional — matrix screening or missing data requires resolution before technology selection.",
-        "CRITICAL":    "CRITICAL — one or more species cannot be treated. Confirm treatment scope with customer.",
+        "CONDITIONAL": "Conditional: matrix screening or missing data requires resolution before technology selection.",
+        "CRITICAL":    "CRITICAL: one or more species cannot be treated. Confirm treatment scope with customer.",
     }.get(overall_status, "")
 
     src_str = ", ".join(data_sources) if data_sources else "provided customer materials"
     n_samples = len(sample_results)
 
-    email = f"""SUBJECT: PFAS Treatment Feasibility Screening — {today}
+    email = f"""SUBJECT: PFAS Treatment Feasibility Screening, {today}
 
 Hi Team,
 
@@ -1496,7 +1496,7 @@ Please follow up with customer to obtain the above before proceeding.
 
     email += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Preliminary screening only — not a substitute for detailed engineering design.
+Preliminary screening only. Not a substitute for detailed engineering design.
 Full technical output available on request.
 
 Claros Product Development Team | PFAS Evaluation Engine v1.0
@@ -1608,7 +1608,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
             logs.append(f"[M2] Sample '{sample_name}' → {s_status}")
     else:
         # Keyword-only path
-        logs.append("[Engine] No concentration data — keyword-only evaluation")
+        logs.append("[Engine] No concentration data: keyword-only evaluation")
         dummy_m1 = Module1Result(
             sample_name="(no quantified data)", total_conc_mg_L=0.0,
             species=[], primary_set=[], top5=[],
@@ -1662,7 +1662,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                 severity="info",
                 rule_id="M1-STAT-RANGE",
                 message=(
-                    "Single-site dataset — Average & Maximum merged into worst-case assessment. "
+                    "Single-site dataset: Average & Maximum merged into worst-case assessment. "
                     f"Max/Avg ratios: {ratio_str}."
                 ),
                 detail=(
@@ -1684,7 +1684,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     rule_id="M1-MAX-UNKNOWN",
                     message=(
                         f"Maximum concentration not reported for: {', '.join(str(x) for x in _sc_avg_only)}. "
-                        "Worst-case assessment uses Average value — actual peak may be higher."
+                        "Worst-case assessment uses Average value; actual peak may be higher."
                     ),
                     detail=(
                         "The Maximum column was blank for these analytes in the source data. "
@@ -1710,7 +1710,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         else:
             # Statistical summaries detected but no avg+max pair — just skip variability
             logs.append(
-                "[M1-VAR] Skipped — all samples are statistical summaries. "
+                "[M1-VAR] Skipped: all samples are statistical summaries. "
                 "No avg+max pair detected to consolidate."
             )
     else:
@@ -1750,7 +1750,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     "and senior applications-engineering sign-off before quoting."
                 ),
             ))
-            logs.append(f"[PROJ] COMMERCIAL flag raised — throughput {_throughput_gpm:.0f} GPM > 100 GPM threshold")
+            logs.append(f"[PROJ] COMMERCIAL flag raised: throughput {_throughput_gpm:.0f} GPM > 100 GPM threshold")
 
     # ── AN-1: analytical feasibility (ultra-low target / drinking water) ─────
     _worst_total = max(

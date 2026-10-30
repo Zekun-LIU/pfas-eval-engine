@@ -243,14 +243,14 @@ def _generate_one_plan(
         slow_reasons.append("PFSA slow kinetics (R4)")
     if telo_slow:
         slow_reasons.append(
-            f"fluorotelomers {telo_pct:.0f}% of total PFAS — "
+            f"fluorotelomers {telo_pct:.0f}% of total PFAS; "
             "transformation cascade (FTOH → FTCA → PFCA) requires extended observation"
         )
 
     if not slow_reasons:
         schedule_type = "short"
         timepoints = SHORT_TIMEPOINTS
-        rationale = "No slow-reacting PFAS detected — standard short schedule (≤ 2 h)."
+        rationale = "No slow-reacting PFAS detected; standard short schedule (≤ 2 h)."
     else:
         if fast or high_throughput:
             schedule_type = "long_dense"
@@ -261,17 +261,17 @@ def _generate_one_plan(
             if high_throughput:
                 drivers.append(f"high throughput ({throughput:.0f} GPM)")
             rationale = ("Slow-reacting PFAS: " + "; ".join(drivers) +
-                         " — long schedule (≤ 24 h) with dense sampling through the first 2 h.")
+                         ". Long schedule (≤ 24 h) with dense sampling through the first 2 h.")
         else:
             schedule_type = "long"
             timepoints = LONG_TIMEPOINTS
             rationale = ("Slow-reacting PFAS (" + "; ".join(slow_reasons) +
-                         ") — long schedule (≤ 24 h).")
+                         "). Long schedule (≤ 24 h).")
 
     customer_requests: List[str] = []
     if throughput is None:
         customer_requests.append(
-            "Required throughput (GPM / commercial capacity) — confirms the sampling schedule."
+            "Required throughput (GPM / commercial capacity); this confirms the sampling schedule."
         )
 
     # ── Pretreatment ─────────────────────────────────────────────────────────
@@ -282,32 +282,32 @@ def _generate_one_plan(
     worst_n = max(no3 or 0.0, no2 or 0.0)
     if worst_n > NITRATE_ELECTROCHEM_PPM:
         pretreatment.append(
-            f"Nitrate/nitrite {worst_n:.0f} mg/L > {NITRATE_ELECTROCHEM_PPM:.0f} ppm — "
+            f"Nitrate/nitrite {worst_n:.0f} mg/L > {NITRATE_ELECTROCHEM_PPM:.0f} ppm: "
             "propose electrochemical pre-reduction (in addition to the increased sulfite dose)."
         )
 
     tss = _get_param(m3, "TSS")
     if tss is not None and tss > TSS_FILTER_MG_L:
-        pretreatment.append(f"Suspended solids (TSS {tss:.0f} mg/L) — filter before reaction.")
+        pretreatment.append(f"Suspended solids (TSS {tss:.0f} mg/L): filter before reaction.")
 
     color = m3.detected_params.get("sample_color")
     if color is not None and str(color).strip().lower() not in _COLORLESS:
         pretreatment.append(
-            f"Colored sample ({color}) — raise pH to 12 with base; check for metal precipitation "
+            f"Colored sample ({color}): raise pH to 12 with base; check for metal precipitation "
             "and colour removal."
         )
 
     # Fluorotelomers → oxidation-then-reduction strategy
     if telo_slow:
         _oxred = (
-            f"Fluorotelomers {telo_pct:.0f}% of total PFAS — consider OXIDATION-then-REDUCTION: "
+            f"Fluorotelomers {telo_pct:.0f}% of total PFAS. Consider OXIDATION-then-REDUCTION: "
             "an oxidative pretreatment step converts fluorotelomers to PFCA, which the reductive "
             "system then destroys efficiently (collapses the slow transformation cascade)."
         )
         _tkn = _get_param(m3, "TKN")
         if _tkn is not None and _tkn > TKN_OXIDATION_CAUTION:
             _oxred += (
-                f" CAUTION: TKN {_tkn:.0f} mg/L > {TKN_OXIDATION_CAUTION:.0f} — oxidation may "
+                f" CAUTION: TKN {_tkn:.0f} mg/L > {TKN_OXIDATION_CAUTION:.0f}; oxidation may "
                 "convert organic nitrogen into nitrate/nitrite (treatment inhibitors); "
                 "confirm nitrogen speciation before applying the oxidative step."
             )
@@ -318,19 +318,19 @@ def _generate_one_plan(
     cod = _get_param(m3, "COD")
     if cod is not None and cod > COD_MAX_MG_L:
         customer_requests.append(
-            f"COD source (COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f}) — confirm whether it is "
+            f"COD source (COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f}): confirm whether it is "
             "methanol/ethanol or another organic solvent."
         )
         if throughput is not None and throughput > THROUGHPUT_DILUTION_MAX_GPM:
             pretreatment.append(
-                f"COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f} — if from MeOH/EtOH proceed unchanged; "
+                f"COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f}. If from MeOH/EtOH, proceed unchanged; "
                 f"if another solvent, further evaluation required. Do NOT dilute "
                 f"(throughput {throughput:.0f} GPM > {THROUGHPUT_DILUTION_MAX_GPM:.0f} GPM)."
             )
         else:
             factor = cod / COD_MAX_MG_L
             pretreatment.append(
-                f"COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f} — if from MeOH/EtOH proceed unchanged; "
+                f"COD {cod:.0f} mg/L > {COD_MAX_MG_L:.0f}. If from MeOH/EtOH, proceed unchanged; "
                 "if another solvent, either further evaluation or (cautiously) dilute."
             )
             dilution = (
@@ -339,7 +339,7 @@ def _generate_one_plan(
             )
 
     if not pretreatment:
-        pretreatment.append("None required — run water as received.")
+        pretreatment.append("None required; run water as received.")
 
     # ── pH ───────────────────────────────────────────────────────────────────
     ph_monitoring = "Measure pH at every sampling point; the final point is mandatory."
@@ -347,7 +347,7 @@ def _generate_one_plan(
     if ppm > PFAS_MIDDOSE_PH_PPM:
         optimization_notes.append(
             f"Total PFAS {format_conc_auto(sr.module1.total_conc_mg_L)} > "
-            f"{PFAS_MIDDOSE_PH_PPM:.0f} ppm — consider mid-run pH re-dosing (optimization stage)."
+            f"{PFAS_MIDDOSE_PH_PPM:.0f} ppm: consider mid-run pH re-dosing (optimization stage)."
         )
 
     # ── External TOF (Novem) ─────────────────────────────────────────────────
@@ -355,9 +355,9 @@ def _generate_one_plan(
     fluoride_handling = ""
     if fluoride is not None and fluoride > FLUORIDE_HANDLING_MG_L:
         fluoride_handling = (
-            f"High inorganic fluoride background ({fluoride:.0f} mg/L): report this to Novem — "
+            f"High inorganic fluoride background ({fluoride:.0f} mg/L): report this to Novem, as "
             "they must pretreat the sample to remove background fluoride before TOF analysis. "
-            "Keep the sample at pH > 12 throughout — never acidic (prevents HF formation)."
+            "Keep the sample at pH > 12 throughout, never acidic (prevents HF formation)."
         )
 
     tof_reported = sr.tof_result is not None
@@ -369,21 +369,21 @@ def _generate_one_plan(
             if _meas > NOVEM_TOF_DL_MG_L:
                 external_tof_needed = True
                 external_tof = (
-                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
+                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F, "
                     f"above the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm). "
-                    f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%) — "
-                    "significant unknown PFAS. Send raw water to Novem for further identification (TOP assay)."
+                    f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%), "
+                    "indicating significant unknown PFAS. Send raw water to Novem for further identification (TOP assay)."
                 )
             else:
                 # Unknown PFAS present, but the level is below what Novem can quantify —
                 # sending would return non-detects and waste the submission.
                 external_tof_needed = False
                 external_tof = (
-                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F — "
+                    f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F, "
                     f"below the Novem detection limit ({NOVEM_TOF_DL_MG_L:.0f} ppm), so Novem "
-                    "would not be able to quantify it — do NOT send. "
+                    "would not be able to quantify it. Do NOT send. "
                     f"Identified species cover only {sr.tof_result.coverage_ratio * 100:.0f}% (< 50%): "
-                    "the unknown-PFAS risk remains — track it through treatment performance "
+                    "the unknown-PFAS risk remains, so track it through treatment performance "
                     "testing (targeted panel before/after) instead of external TOF."
                 )
         else:
@@ -392,14 +392,14 @@ def _generate_one_plan(
                 f"Known {sr.tof_result.measured_type} level: {format_conc_auto(_meas)} as F "
                 f"({_dl_rel} the Novem detection limit of {NOVEM_TOF_DL_MG_L:.0f} ppm). "
                 f"Adequately covered by identified species "
-                f"({sr.tof_result.coverage_ratio * 100:.0f}%) — external TOF not required."
+                f"({sr.tof_result.coverage_ratio * 100:.0f}%); external TOF not required."
             )
     else:
         if theo_tof > NOVEM_TOF_DL_MG_L:
             external_tof_needed = True
             external_tof = (
                 f"No customer TOF/AOF reported. Expected TOF from identified species: "
-                f"{format_conc_auto(theo_tof)} as F — above the Novem detection limit "
+                f"{format_conc_auto(theo_tof)} as F, above the Novem detection limit "
                 f"({NOVEM_TOF_DL_MG_L:.0f} ppm). Send raw water to Novem for TOF."
             )
         elif theo_tof > NOVEM_TOF_BORDERLINE_MG_L:
@@ -408,7 +408,7 @@ def _generate_one_plan(
             external_tof_needed = True   # submission possible — keep fluoride guidance
             external_tof = (
                 f"No customer TOF/AOF reported. Expected TOF from identified species: "
-                f"{format_conc_auto(theo_tof)} as F — BORDERLINE: below the Novem detection "
+                f"{format_conc_auto(theo_tof)} as F. BORDERLINE: below the Novem detection "
                 f"limit ({NOVEM_TOF_DL_MG_L:.0f} ppm), but this estimate is a lower bound "
                 "(unknown species are not included), so the actual organofluorine load may "
                 "exceed the DL. Action: discuss with Novem and Zack before deciding whether to submit."
@@ -417,7 +417,7 @@ def _generate_one_plan(
             external_tof_needed = False
             external_tof = (
                 f"No customer TOF/AOF reported. Expected TOF from identified species: "
-                f"{format_conc_auto(theo_tof)} as F — below the Novem detection limit "
+                f"{format_conc_auto(theo_tof)} as F, below the Novem detection limit "
                 f"({NOVEM_TOF_DL_MG_L:.0f} ppm); external TOF would not be informative."
             )
 
@@ -465,7 +465,7 @@ def generate_test_plans(result: EvaluationResult, parsed: Optional[ParsedData]) 
 def build_plan_text(plan: TestPlan) -> str:
     lines = [
         "=" * 66,
-        f"BENCH TEST PLAN — {plan.sample_name}",
+        f"BENCH TEST PLAN: {plan.sample_name}",
         "750 mL Amazon Reactor  |  Proof-of-Concept stage",
         "=" * 66,
         f"Total PFAS: {format_conc_auto(plan.total_pfas_mg_L)}",

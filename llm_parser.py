@@ -375,7 +375,7 @@ def _excel_to_text(file_bytes: bytes, filename: str) -> str:
 
     text = "\n".join(parts)
     if len(text) > 40_000:
-        text = text[:40_000] + "\n... [TRUNCATED — document continues]"
+        text = text[:40_000] + "\n... [TRUNCATED: document continues]"
     return text
 
 
@@ -519,7 +519,7 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
             if is_missing:
                 # do_not_assume_zero: blank cell → excluded entirely
                 result.llm_parse_notes.append(
-                    f"Sample '{sample_name}', '{species_raw}': blank cell — excluded (do_not_assume_zero)"
+                    f"Sample '{sample_name}', '{species_raw}': blank cell, excluded (do_not_assume_zero)"
                 )
             elif is_nd:
                 nd_list.append(canonical)
@@ -598,7 +598,7 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
                 # Strip the as-N token but keep the magnitude unit (µg/L vs mg/L)
                 u = re.sub(r"(?i)\bas\s*n\b|[-–]\s*n\b", "", u).strip(" -–") or "mg/L"
                 result.llm_parse_notes.append(
-                    f"{llm_key} reported as-N — converted ×{_f} to as-ion "
+                    f"{llm_key} reported as-N, converted ×{_f} to as-ion "
                     f"({v_float:g} {u})"
                 )
 
@@ -612,7 +612,7 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
                 # Unknown unit — store as-is and log
                 result.matrix_params[canonical_key] = v_float
                 result.warnings.append(
-                    f"[LLM] Unknown unit '{u}' for {llm_key} — stored raw value {v_float}"
+                    f"[LLM] Unknown unit '{u}' for {llm_key}; stored raw value {v_float}"
                 )
 
     # ── Flow rate / throughput: convert to GPM and store in project context ──────
@@ -632,7 +632,7 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
                 # Unit unknown — store raw for display only
                 result.llm_project_context["flow_rate_display"] = f"{fv:g} {flow_unit} (unit not converted)"
                 result.llm_parse_notes.append(
-                    f"Throughput extracted: {fv:g} {flow_unit} — unit not recognised, GPM conversion skipped"
+                    f"Throughput extracted: {fv:g} {flow_unit}; unit not recognised, GPM conversion skipped"
                 )
         except (ValueError, TypeError):
             pass
@@ -689,7 +689,7 @@ def parse_with_llm(
     if len(excel_files) + len(pdf_files) > 1:
         document_text = (
             "NOTE: multiple files are provided. Customers often split one site's data "
-            "across files by type — e.g. PFAS results in one file and general water "
+            "across files by type, e.g. PFAS results in one file and general water "
             "chemistry (COD, TOC, nitrate, pH, metals ...) in another. Combine them: PFAS "
             "results go into samples, water chemistry from ANY file goes into water_matrix. "
             "Do not create a sample entry for a file that has no PFAS measurements. "
@@ -700,21 +700,21 @@ def parse_with_llm(
 
     truncation_notes: List[str] = []
     if len(document_text) > _MAX_DOCUMENT_CHARS:
-        document_text = document_text[:_MAX_DOCUMENT_CHARS] + "\n... [TRUNCATED — combined uploads exceed limit]"
+        document_text = document_text[:_MAX_DOCUMENT_CHARS] + "\n... [TRUNCATED: combined uploads exceed limit]"
         truncation_notes.append(
-            f"[LLM] Combined lab-data uploads exceeded {_MAX_DOCUMENT_CHARS:,} characters — "
+            f"[LLM] Combined lab-data uploads exceeded {_MAX_DOCUMENT_CHARS:,} characters; "
             "the end was truncated. Upload fewer files per run if data looks incomplete."
         )
     if len(notes_text) > _MAX_NOTES_CHARS:
         notes_text = notes_text[:_MAX_NOTES_CHARS] + "\n... [TRUNCATED]"
         truncation_notes.append(
-            f"[LLM] Customer email / notes exceeded {_MAX_NOTES_CHARS:,} characters — truncated."
+            f"[LLM] Customer email / notes exceeded {_MAX_NOTES_CHARS:,} characters; truncated."
         )
     goals_for_prompt = goals_text
     if len(goals_for_prompt) > _MAX_NOTES_CHARS:
         goals_for_prompt = goals_for_prompt[:_MAX_NOTES_CHARS] + "\n... [TRUNCATED]"
         truncation_notes.append(
-            f"[LLM] Treatment goals / context exceeded {_MAX_NOTES_CHARS:,} characters — "
+            f"[LLM] Treatment goals / context exceeded {_MAX_NOTES_CHARS:,} characters; "
             "truncated for reading (full text still used by engine keyword rules)."
         )
 
@@ -731,7 +731,7 @@ def parse_with_llm(
         result.has_pdf = has_pdf
         result.has_text = bool(goals_text.strip() or notes_text.strip())
         result.llm_raw_response = raw_response
-        result.logs.insert(0, "[LLM] ✨ Enhanced Data-Reading active — Claude Sonnet pre-parser")
+        result.logs.insert(0, "[LLM] Enhanced Data-Reading active (Claude Sonnet pre-parser)")
         return result
 
     except Exception as exc:
@@ -743,8 +743,8 @@ def parse_with_llm(
             goals_text=goals_text,
         )
         fallback.warnings.append(
-            f"[LLM] Enhanced Data-Reading failed ({exc!s}) — fell back to rule-based parser."
+            f"[LLM] Enhanced Data-Reading failed ({exc!s}); fell back to rule-based parser."
         )
         fallback.llm_raw_response = f"ERROR:\n{exc}"
-        fallback.logs.insert(0, f"[LLM] FALLBACK — reason: {exc}")
+        fallback.logs.insert(0, f"[LLM] FALLBACK, reason: {exc}")
         return fallback
