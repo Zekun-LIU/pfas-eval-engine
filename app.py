@@ -1487,7 +1487,7 @@ st.markdown(
     """
     <div class="pfas-header">
         <h1>PFAS Material Evaluation Engine</h1>
-        <div class="subtitle">Claros R&amp;D &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
+        <div class="subtitle">Claros Product Development &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
         <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal R&amp;D Use Only</div>
     </div>
     """,
