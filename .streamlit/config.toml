@@ -1,7 +1,11 @@
 [theme]
 base            = "light"
-primaryColor    = "#007AFF"
+primaryColor    = "#1F4E79"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F5F5F7"
-textColor       = "#1D1D1F"
-font            = "sans serif"
+secondaryBackgroundColor = "#F4F4F2"
+textColor       = "#1B1B1B"
+borderColor     = "#CFCFCF"
+showWidgetBorder = true
+baseRadius      = "small"
+font            = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap, sans-serif"
+codeFont        = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"

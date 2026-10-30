@@ -13,6 +13,8 @@ import os
 # Ensure local modules are importable regardless of working directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import html
+
 import streamlit as st
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -42,8 +44,6 @@ from utils import (
     CATEGORY_LABELS,
     format_conc_auto,
     format_pct,
-    severity_badge,
-    status_badge_html,
 )
 from module4 import (
     generate_test_plans, build_plan_text, TestPlan,
@@ -204,287 +204,177 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
-    /* ── Global typography & background ──────────────────────── */
+    :root {
+        --ink: #1B1B1B;
+        --muted: #5C5C5C;
+        --rule: #CFCFCF;
+        --rule-light: #E6E6E6;
+        --tint: #F4F4F2;
+        --accent: #1F4E79;
+        --sev-critical: #A61B1B;
+        --sev-warning: #8F5200;
+        --sev-ok: #2E6B30;
+        --sev-info: #1F4E79;
+        --sev-commercial: #5B3A8C;
+        --sev-technical: #8F5200;
+        --sev-other: #555555;
+    }
+
     html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        background-color: #FFFFFF;
-        color: #1D1D1F;
-        line-height: 1.65;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-        text-rendering: optimizeLegibility;
+        font-family: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;
+        color: var(--ink);
+        line-height: 1.5;
     }
-
-    /* ── Page chrome ──────────────────────────────────────────── */
-    .block-container { padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1400px; }
+    .block-container { padding-top: 3.4rem; padding-bottom: 2.5rem; max-width: 1180px; }
     section[data-testid="stSidebar"] { display: none; }
+    .mono, code { font-family: 'IBM Plex Mono', Consolas, monospace; }
 
-    /* ── Header — flat full-width banner ──────────────────────── */
-    .pfas-header {
-        background: #1D1D1F;
-        color: white;
-        padding: 30px 36px 24px 36px;
-        border-radius: 12px;
-        margin-bottom: 24px;
+    /* ── Document header ─────────────────────────────────────── */
+    .rpt-header {
+        display: flex; justify-content: space-between; align-items: flex-end;
+        gap: 24px; flex-wrap: wrap;
+        border-bottom: 2px solid var(--ink);
+        padding: 4px 0 10px 0; margin-bottom: 18px;
     }
-    .pfas-header h1 {
-        margin: 0; font-size: 1.65rem; font-weight: 700;
-        color: white; letter-spacing: -0.5px; line-height: 1.2;
+    .rpt-header .org { font-size: 0.82rem; font-weight: 600; color: var(--accent); }
+    .rpt-header h1 {
+        margin: 2px 0 0 0; padding: 0; font-size: 1.45rem; font-weight: 600;
+        color: var(--ink); line-height: 1.25;
     }
-    .pfas-header .subtitle {
-        font-size: 0.9rem; color: rgba(255,255,255,0.6); margin-top: 6px; font-weight: 400;
-    }
-    .pfas-header .byline {
-        font-size: 0.75rem; color: rgba(255,255,255,0.35); margin-top: 4px;
-    }
+    .rpt-header .sub { font-size: 0.88rem; color: var(--muted); margin-top: 2px; }
+    .rpt-header .meta { font-size: 0.76rem; color: var(--muted); text-align: right; line-height: 1.5; }
 
-    /* ── Section headers ──────────────────────────────────────── */
-    .section-header {
-        font-size: 0.72rem; font-weight: 600; letter-spacing: 1.8px;
-        text-transform: uppercase; color: #6E6E73;
-        margin: 28px 0 10px 0;
-        padding-bottom: 7px;
-        border-bottom: 1px solid #F0F0F2;
+    /* ── Report headings ─────────────────────────────────────── */
+    .rpt-h2 {
+        font-size: 1.02rem; font-weight: 600; color: var(--ink);
+        margin: 26px 0 8px 0; padding-bottom: 4px;
+        border-bottom: 1px solid var(--ink);
     }
+    .rpt-h2 .n {
+        font-family: 'IBM Plex Mono', Consolas, monospace; font-weight: 500;
+        color: var(--muted); margin-right: 12px;
+    }
+    .rpt-h3 { font-size: 0.9rem; font-weight: 600; color: var(--ink); margin: 18px 0 6px 0; }
+    .field-label { font-size: 0.85rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+    .field-sublabel { font-size: 0.78rem; color: var(--muted); margin: 4px 0 -4px 0; }
+    .muted { color: var(--muted); font-size: 0.84rem; }
 
-    /* ── Flag rows — uniform geometry for ALL colored blocks ──── */
-    /* One standard: 12px 16px padding, 10px radius, 4px left border,
-       no extra margins — vertical rhythm comes from Streamlit's uniform gap. */
-    .flag-row {
-        padding: 12px 16px; border-radius: 10px;
-        margin: 0; font-size: 0.86rem; line-height: 1.6;
-        color: #1D1D1F !important;
+    /* ── Tables ──────────────────────────────────────────────── */
+    table.rpt {
+        border-collapse: collapse; width: 100%; margin: 4px 0 12px 0;
+        font-size: 0.84rem; border: none;
     }
-    .flag-critical        { background: #FFF1F2; border-left: 4px solid #FF3B30; }
-    .flag-warning         { background: #FFFBEB; border-left: 4px solid #FF9500; }
-    .flag-info            { background: #F0F5FF; border-left: 4px solid #007AFF; }
-    .flag-ok              { background: #F0FFF5; border-left: 4px solid #34C759; }
-    .flag-commercial      { background: #F5F0FF; border-left: 4px solid #AF52DE; }
-    .flag-technical       { background: #FFF8F0; border-left: 4px solid #FF6B00; }
-    .flag-pathway         { background: #F0FFF9; border-left: 4px solid #30D158; }
-    .flag-special_handling{ background: #F8F8F9; border-left: 4px solid #8E8E93; }
-    .flag-row strong      { color: #1D1D1F !important; }
-    .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 6px; font-style: italic; line-height: 1.55; }
+    table.rpt th, table.rpt td {
+        border: none; border-bottom: 1px solid var(--rule-light);
+        padding: 6px 14px 6px 0; text-align: left; vertical-align: top;
+        background: transparent; color: var(--ink);
+    }
+    table.rpt th { font-weight: 600; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+    table.rpt tr:last-child td { border-bottom: 1px solid var(--rule); }
+    table.rpt .num {
+        text-align: right; font-family: 'IBM Plex Mono', Consolas, monospace;
+        font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    table.rpt .code {
+        font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 0.78rem; white-space: nowrap;
+    }
+    table.rpt th.num, table.rpt th.code { font-family: inherit; font-size: inherit; }
+    table.rpt tr, table.rpt thead { border: none !important; background: transparent !important; }
+    table.rpt .detail { color: var(--muted); font-size: 0.79rem; margin-top: 3px; line-height: 1.45; }
+    table.kv th { border-bottom: none; color: var(--muted); font-weight: 500; font-size: 0.78rem; padding-bottom: 0; }
+    table.kv td { border-bottom: 1px solid var(--rule); font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 0.92rem; }
 
-    /* Severity dot + tag + rule-id chip (replaces emoji icons) */
-    .flag-dot {
-        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-        margin-right: 9px; vertical-align: 1px;
+    /* ── Severity labels: text + square marker, no pills ──────── */
+    .sev { white-space: nowrap; font-weight: 600; font-size: 0.8rem; }
+    .sev::before {
+        content: ""; display: inline-block; width: 7px; height: 7px;
+        margin-right: 7px; vertical-align: 1px; background: currentColor;
     }
-    .flag-critical         .flag-dot { background: #FF3B30; }
-    .flag-warning          .flag-dot { background: #FF9500; }
-    .flag-info             .flag-dot { background: #007AFF; }
-    .flag-ok               .flag-dot { background: #34C759; }
-    .flag-commercial       .flag-dot { background: #AF52DE; }
-    .flag-technical        .flag-dot { background: #FF6B00; }
-    .flag-pathway          .flag-dot { background: #30D158; }
-    .flag-special_handling .flag-dot { background: #8E8E93; }
-    .flag-tag {
-        font-weight: 700; font-size: 0.72rem; letter-spacing: 0.9px;
-        margin-right: 8px; color: #1D1D1F;
-    }
-    .flag-rule {
-        font-size: 0.70rem; font-weight: 500; color: #6E6E73;
-        letter-spacing: 0.4px; margin-right: 10px;
-        padding: 1px 7px; background: rgba(0,0,0,0.05); border-radius: 5px;
-        font-variant-numeric: tabular-nums;
-    }
+    .sev-critical   { color: var(--sev-critical); }
+    .sev-warning    { color: var(--sev-warning); }
+    .sev-ok, .sev-pathway { color: var(--sev-ok); }
+    .sev-info       { color: var(--sev-info); }
+    .sev-commercial { color: var(--sev-commercial); }
+    .sev-technical  { color: var(--sev-technical); }
+    .sev-special_handling, .sev-none { color: var(--sev-other); }
+    .status-line { font-size: 0.95rem; margin: 4px 0 8px 0; }
+    .status-line .sev { font-size: 1rem; letter-spacing: 0.3px; }
 
-    /* ── Variability banner ───────────────────────────────────── */
-    .variability-banner {
-        background: #FFF8EC; border: 1px solid #FFCC00; border-radius: 10px;
-        padding: 12px 18px; font-size: 0.86rem; color: #5C3D00 !important; margin: 10px 0;
+    /* ── Notes (replaces coloured callout cards) ─────────────── */
+    .note {
+        border-left: 2px solid var(--rule); padding: 1px 0 1px 12px;
+        margin: 8px 0; font-size: 0.85rem; line-height: 1.55; color: var(--ink);
     }
+    .note-critical { border-left-color: var(--sev-critical); }
+    .note-warning  { border-left-color: var(--sev-warning); }
+    .note-info     { border-left-color: var(--sev-info); }
+    .note-ok       { border-left-color: var(--sev-ok); }
+    .note .detail  { color: var(--muted); font-size: 0.8rem; }
 
-    /* ── Metric cards — flat with hover ──────────────────────── */
-    .metric-card {
-        background: #F5F5F7;
-        border: 1px solid rgba(0,0,0,0.06);
-        border-radius: 14px; padding: 18px 18px; text-align: center;
-        transition: border-color 0.15s ease, background 0.15s ease;
-    }
-    .metric-card:hover {
-        border-color: rgba(0,122,255,0.22);
-        background: #EEF4FF;
-    }
-    .metric-card .val {
-        font-size: 1.45rem; font-weight: 700; color: #1D1D1F;
-        letter-spacing: -0.5px;
-        font-variant-numeric: tabular-nums;
-    }
-    .metric-card .lbl {
-        font-size: 0.68rem; color: #6E6E73; margin-top: 5px;
-        text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.4;
-    }
+    ol.rpt-list, ul.rpt-list { margin: 4px 0 8px 0; padding-left: 22px; font-size: 0.88rem; }
+    ol.rpt-list li, ul.rpt-list li { margin: 2px 0; }
 
-    /* ── Email box — flat ─────────────────────────────────────── */
+    /* ── Email draft ─────────────────────────────────────────── */
     .email-box {
-        background: #F5F5F7;
-        border: 1px solid rgba(0,0,0,0.07);
-        border-radius: 14px;
-        padding: 24px 28px;
-        font-family: 'Inter', sans-serif;
-        font-size: 0.88rem;
-        white-space: pre-wrap;
-        line-height: 1.85;
-        color: #1D1D1F !important;
+        background: #FFFFFF; border: 1px solid var(--rule); border-radius: 2px;
+        padding: 20px 24px; font-size: 0.88rem; white-space: pre-wrap;
+        line-height: 1.7; color: var(--ink) !important;
     }
 
-    /* ── Input panel ──────────────────────────────────────────── */
-    .input-card {
-        background: #F5F5F7; border: 1px solid rgba(0,0,0,0.06);
-        border-radius: 12px; padding: 16px 18px; margin-bottom: 12px;
-    }
-    .input-label {
-        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.6px;
-        text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
-    }
-    .input-sublabel {
-        font-size: 0.74rem; font-weight: 500; color: #6E6E73;
-        margin: 2px 0 -6px 0;
-    }
+    /* ── Inputs ──────────────────────────────────────────────── */
+    [data-testid="stTextArea"] textarea::placeholder { color: #9A9A9A !important; opacity: 1 !important; }
+    [data-testid="stFileUploaderDropzone"] { background: #FFFFFF; border: 1px dashed #BDBDBD; }
 
-    /* ── Placeholder text — light, clearly example-only ───────── */
-    [data-testid="stTextArea"] textarea::placeholder {
-        color: #B8BCC2 !important;
-        opacity: 1 !important;
-    }
-
-    /* ── Run button — flat ────────────────────────────────────── */
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .st-key-run_btn button { width: 100%; }
     div[data-testid="stButton"] > button {
-        width: 100%;
-        background: #007AFF;
-        color: white !important; font-weight: 600; font-size: 0.95rem;
-        padding: 13px; border-radius: 10px; border: none;
-        letter-spacing: 0.2px;
-        transition: background 0.15s ease;
-        cursor: pointer;
+        min-width: 180px; background: var(--accent); color: #FFFFFF !important;
+        font-weight: 600; font-size: 0.92rem; padding: 9px 12px;
+        border: 1px solid var(--accent); border-radius: 2px; cursor: pointer;
     }
-    div[data-testid="stButton"] > button:hover  { background: #0066DD; }
-    div[data-testid="stButton"] > button:active { background: #0052CC; }
-
-    /* ── Download buttons — ghost style ──────────────────────── */
+    div[data-testid="stButton"] > button:hover  { background: #173B5C; border-color: #173B5C; }
+    div[data-testid="stButton"] > button:active { background: #112C45; }
     [data-testid="stDownloadButton"] > button {
-        background: transparent !important;
-        border: 1px solid #D1D1D6 !important;
-        color: #1D1D1F !important;
-        font-size: 0.85rem !important;
-        font-weight: 500 !important;
-        border-radius: 8px !important;
-        transition: background 0.15s ease, border-color 0.15s ease !important;
-        cursor: pointer !important;
+        background: #FFFFFF !important; border: 1px solid #8A8A8A !important;
+        color: var(--ink) !important; font-size: 0.85rem !important;
+        font-weight: 500 !important; border-radius: 2px !important; cursor: pointer !important;
     }
-    [data-testid="stDownloadButton"] > button:hover {
-        background: #F5F5F7 !important;
-        border-color: #8E8E93 !important;
-    }
+    [data-testid="stDownloadButton"] > button:hover { background: var(--tint) !important; }
 
-    /* ── Source indicator pills ───────────────────────────────── */
-    .src-pill {
-        display: inline-block; border-radius: 20px;
-        padding: 3px 10px; font-size: 0.72rem; font-weight: 600;
-        margin-right: 4px; letter-spacing: 0.3px;
-    }
-    .src-on  { background: rgba(52,199,89,0.12); color: #1A7A37; border: 1px solid rgba(52,199,89,0.3); }
-    .src-off { background: rgba(142,142,147,0.1); color: #8E8E93; border: 1px solid rgba(142,142,147,0.2); }
-
-    /* ── Footer ───────────────────────────────────────────────── */
-    .pfas-footer {
-        text-align: center; font-size: 0.70rem; color: #8E8E93;
-        margin-top: 48px; padding-top: 16px;
-        border-top: 1px solid #E5E5EA;
-        letter-spacing: 0.3px;
-    }
-
-    /* ── Streamlit tab overrides ──────────────────────────────── */
+    /* ── Tabs ────────────────────────────────────────────────── */
     button[data-baseweb="tab"] {
-        font-size: 0.88rem !important; font-weight: 500 !important;
-        padding: 10px 4px !important; margin-right: 24px !important;
-        color: #6E6E73 !important;
-        border-bottom: 2px solid transparent !important;
-        transition: color 0.15s ease !important;
+        font-size: 0.9rem !important; font-weight: 500 !important;
+        padding: 8px 2px !important; margin-right: 26px !important; color: var(--muted) !important;
     }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        font-weight: 600 !important;
-        color: #1D1D1F !important;
-        border-bottom: 2px solid #007AFF !important;
-    }
-    button[data-baseweb="tab"]:hover { color: #1D1D1F !important; }
+    button[data-baseweb="tab"][aria-selected="true"] { font-weight: 600 !important; color: var(--ink) !important; }
+    div[data-baseweb="tab-highlight"] { background-color: var(--ink) !important; height: 2px !important; }
+    div[data-baseweb="tab-panel"] { padding-top: 10px !important; }
 
-    /* ── Streamlit divider ────────────────────────────────────── */
-    hr { border-color: #E5E5EA !important; }
+    hr { border-color: var(--rule) !important; }
+    [data-testid="stExpander"] details { border-radius: 2px !important; }
 
-    /* ── Streamlit dataframe ──────────────────────────────────── */
-    [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+    /* ── Run progress (thin bar instead of spinner ring) ─────── */
+    .prog { margin: 10px 0 18px 0; font-size: 0.85rem; color: var(--muted); }
+    .prog-bar { height: 3px; background: var(--rule-light); margin-top: 6px; }
+    .prog-bar > div { height: 3px; background: var(--accent); }
 
-    /* ── Streamlit expander ───────────────────────────────────── */
-    [data-testid="stExpander"] {
-        border: 1px solid #E5E5EA !important;
-        border-radius: 12px !important;
-        margin-bottom: 10px;
+    .empty-state { color: var(--muted); padding: 22px 0 30px 0; font-size: 0.88rem; }
+
+    .rpt-footer {
+        font-size: 0.74rem; color: var(--muted); margin-top: 40px; padding-top: 10px;
+        border-top: 1px solid var(--rule);
     }
 
-    /* ── Streamlit alerts ─────────────────────────────────────── */
-    [data-testid="stAlert"] { border-radius: 10px !important; }
-
-    /* ── Empty state placeholder ──────────────────────────────── */
-    .empty-state {
-        color: #8E8E93; padding: 64px 0 48px 0;
-        text-align: center; font-size: 0.92rem; line-height: 1.6;
-    }
-    .empty-state-icon { display: flex; justify-content: center; margin-bottom: 14px; color: #8E8E93; opacity: 0.6; }
-    .empty-state-icon svg { width: 34px; height: 34px; }
-
-    /* ── Hide native Streamlit running indicator ──────────────── */
     [data-testid="stStatusWidget"] { display: none !important; }
 
-    /* ── Circular progress ring ──────────────────────────────── */
-    .progress-ring-container {
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 14px; padding: 36px 36px; margin: 8px 0 16px 0;
-        background: #F5F5F7; border: 1px solid #E5E5EA; border-radius: 12px;
+    button:focus-visible, [data-baseweb="tab"]:focus-visible, textarea:focus-visible {
+        outline: 2px solid var(--accent) !important; outline-offset: 2px !important;
     }
-    .progress-ring-wrapper {
-        position: relative; width: 110px; height: 110px;
-    }
-    .progress-ring-wrapper svg { width: 110px; height: 110px; }
-    .progress-ring-pct {
-        position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 1.45rem; font-weight: 700; color: #1D1D1F; letter-spacing: -1px;
-        font-variant-numeric: tabular-nums;
-    }
-    .progress-ring-label {
-        font-size: 0.88rem; font-weight: 400; color: #6E6E73;
-        text-align: center; max-width: 420px; line-height: 1.55;
-    }
-    /* ── Email generating indicator ──────────────────────────── */
-    .email-generating {
-        color: #6E6E73; font-size: 0.9rem; font-weight: 500;
-        padding: 20px 0; text-align: center; letter-spacing: 0.1px;
-    }
-
-    /* ── Tab panel breathing room ─────────────────────────────── */
-    div[data-baseweb="tab-panel"] { padding-top: 16px !important; }
-
-    /* ── Keyboard focus visibility ────────────────────────────── */
-    button:focus-visible,
-    [data-baseweb="tab"]:focus-visible,
-    textarea:focus-visible {
-        outline: 2px solid #007AFF !important;
-        outline-offset: 2px !important;
-    }
-
-    /* ── Respect reduced-motion preference ────────────────────── */
     @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after {
-            animation: none !important;
-            transition: none !important;
-        }
+        *, *::before, *::after { animation: none !important; transition: none !important; }
     }
-
     </style>
     """,
     unsafe_allow_html=True,
@@ -495,29 +385,97 @@ st.markdown(
 # RENDERING FUNCTIONS  (defined before any UI calls)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _render_flag(flag) -> None:
-    """Render a single FlagItem as a styled HTML block — supports all spec severity types."""
-    css_class = f"flag-{flag.severity}"
-    label = {
-        "critical":        "CRITICAL",
-        "commercial":      "COMMERCIAL",
-        "technical":       "TECHNICAL",
-        "pathway":         "PATHWAY",
-        "special_handling":"SPECIAL HANDLING",
-        "warning":         "WARNING",
-        "info":            "INFO",
-        "ok":              "OK",
-    }.get(flag.severity, flag.severity.upper())
-    detail_html = f'<div class="flag-detail">{flag.detail}</div>' if flag.detail else ""
+_SEV_LABEL = {
+    "critical":         "Critical",
+    "commercial":       "Commercial",
+    "technical":        "Technical",
+    "pathway":          "Pathway",
+    "special_handling": "Special handling",
+    "warning":          "Warning",
+    "info":             "Info",
+    "ok":               "OK",
+}
+_STATUS_SEV = {"PROCEED": "ok", "CONDITIONAL": "warning", "CRITICAL": "critical"}
+
+
+def _sev_html(severity: str, label: str | None = None) -> str:
+    text = label or _SEV_LABEL.get(severity, severity.replace("_", " ").capitalize())
+    return f'<span class="sev sev-{severity}">{text}</span>'
+
+
+def _heading(text: str, num: str | None = None) -> None:
+    n = f'<span class="n">{num}</span>' if num else ""
+    st.markdown(f'<div class="rpt-h2">{n}{text}</div>', unsafe_allow_html=True)
+
+
+def _subheading(text: str) -> None:
+    st.markdown(f'<div class="rpt-h3">{text}</div>', unsafe_allow_html=True)
+
+
+def _note(body: str, severity: str = "", detail: str = "") -> None:
+    cls = f" note-{severity}" if severity else ""
+    detail_html = f'<div class="detail">{detail}</div>' if detail else ""
+    st.markdown(f'<div class="note{cls}">{body}{detail_html}</div>', unsafe_allow_html=True)
+
+
+def _html_table(
+    rows: list[dict],
+    num_cols: tuple = (),
+    code_cols: tuple = (),
+    html_cols: tuple = (),
+    css: str = "rpt",
+) -> None:
+    """Static report table. Cells are escaped unless their column is in html_cols."""
+    if not rows:
+        return
+    cols = list(rows[0].keys())
+
+    def _cls(c: str) -> str:
+        if c in num_cols:
+            return ' class="num"'
+        if c in code_cols:
+            return ' class="code"'
+        return ""
+
+    head = "".join(f"<th{_cls(c)}>{html.escape(c)}</th>" for c in cols)
+    body = "".join(
+        "<tr>" + "".join(
+            f"<td{_cls(c)}>"
+            + (str(r.get(c, "")) if c in html_cols else html.escape(str(r.get(c, ""))))
+            + "</td>"
+            for c in cols
+        ) + "</tr>"
+        for r in rows
+    )
     st.markdown(
-        f'<div class="flag-row {css_class}">'
-        f'<span class="flag-dot"></span>'
-        f'<span class="flag-tag">{label}</span>'
-        f'<span class="flag-rule">{flag.rule_id}</span>'
-        f'{flag.message}'
-        f'{detail_html}</div>',
+        f'<table class="{css}"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>',
         unsafe_allow_html=True,
     )
+
+
+def _kv_table(pairs: list[tuple[str, str]]) -> None:
+    """One-row summary table: labels above values (replaces metric cards)."""
+    _html_table([{k: v for k, v in pairs}], css="rpt kv")
+
+
+def _flags_table(flags) -> None:
+    """All findings render as rows of one table: rule, severity, finding (+ detail)."""
+    flags = list(flags)
+    if not flags:
+        return
+    rows = []
+    for f in flags:
+        detail = f'<div class="detail">{f.detail}</div>' if f.detail else ""
+        rows.append({
+            "Rule": html.escape(str(f.rule_id)),
+            "Severity": _sev_html(f.severity),
+            "Finding": f"{f.message}{detail}",
+        })
+    _html_table(rows, code_cols=("Rule",), html_cols=("Rule", "Severity", "Finding"))
+
+
+def _render_flag(flag) -> None:
+    _flags_table([flag])
 
 
 def _param_traffic_light(key: str, value) -> str:
@@ -570,73 +528,42 @@ def _param_traffic_light(key: str, value) -> str:
 
 def _render_tof_analysis(tof: "TOFAnalysisResult") -> None:
     """Render the TOF/AOF theoretical coverage analysis for a single sample."""
-    import pandas as pd
-
-    st.markdown(
-        '<div class="section-header">TOF Coverage Analysis — Theoretical vs Reported Organic Fluorine</div>',
-        unsafe_allow_html=True,
-    )
-
-    ratio_pct = tof.coverage_ratio * 100
-    status_dot = "#FF9500" if tof.unknown_pfas_flag else "#34C759"
-    st.markdown(
-        f'<div style="font-weight:600; font-size:0.92rem; margin:2px 0 10px 0;">'
-        f'<span style="display:inline-block; width:9px; height:9px; border-radius:50%;'
-        f' background:{status_dot}; margin-right:9px; vertical-align:1px;"></span>'
-        f'Theoretical TOF covers {ratio_pct:.1f}% of reported {tof.measured_type}</div>',
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="val">{format_conc_auto(tof.theoretical_tof_mg_L)}</div>'
-            f'<div class="lbl">Theoretical TOF (as F)</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="val">{format_conc_auto(tof.measured_mg_L)}</div>'
-            f'<div class="lbl">Reported {tof.measured_type} (as F)</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c3:
-        pct_color = "#FF3B30" if tof.unknown_pfas_flag else "#34C759"
-        st.markdown(
-            f'<div class="metric-card">'
-            f'<div class="val" style="color:{pct_color}">{ratio_pct:.1f}%</div>'
-            f'<div class="lbl">Coverage ratio</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-    # Species contributions table
+    _subheading("TOF coverage: theoretical vs reported organic fluorine")
+    _kv_table([
+        ("Theoretical TOF (as F)", format_conc_auto(tof.theoretical_tof_mg_L)),
+        (f"Reported {tof.measured_type} (as F)", format_conc_auto(tof.measured_mg_L)),
+        ("Coverage", f"{tof.coverage_ratio * 100:.1f}%"),
+    ])
     if tof.species_contributions:
-        contrib_rows = [
-            {
-                "Species": name,
-                "Concentration": format_conc_auto(conc),
-                "F Contribution": format_conc_auto(f_c) + " as F",
-                "% of Theoretical TOF": (
-                    f"{f_c / tof.theoretical_tof_mg_L * 100:.1f}%"
-                    if tof.theoretical_tof_mg_L > 0 else "—"
-                ),
-            }
-            for name, conc, f_c in tof.species_contributions
-        ]
-        st.dataframe(pd.DataFrame(contrib_rows), use_container_width=True, hide_index=True)
-
-    for f in tof.flags:
-        _render_flag(f)
-
+        _html_table(
+            [
+                {
+                    "Species": name,
+                    "Concentration": format_conc_auto(conc),
+                    "F contribution (as F)": format_conc_auto(f_c),
+                    "% of theoretical TOF": (
+                        f"{f_c / tof.theoretical_tof_mg_L * 100:.1f}%"
+                        if tof.theoretical_tof_mg_L > 0 else "n/a"
+                    ),
+                }
+                for name, conc, f_c in tof.species_contributions
+            ],
+            num_cols=("Concentration", "F contribution (as F)", "% of theoretical TOF"),
+        )
+    _flags_table(tof.flags)
     if tof.unknown_pfas_flag:
         st.caption(
-            f"Threshold: theoretical TOF must be ≥ {TOF_COVERAGE_THRESHOLD * 100:.0f}% "
+            f"Threshold: theoretical TOF must be at least {TOF_COVERAGE_THRESHOLD * 100:.0f}% "
             f"of reported {tof.measured_type} to clear the unknown-PFAS flag."
         )
+
+
+def _category_rows(m1) -> list[dict]:
+    return [
+        {"Category": CATEGORY_LABELS.get(cat, cat), "Share of total": format_pct(frac * 100)}
+        for cat, frac in sorted(m1.category_fractions.items(), key=lambda x: -x[1])
+        if frac > 0.001
+    ]
 
 
 def _render_sample_section(
@@ -645,223 +572,159 @@ def _render_sample_section(
     nd_species: "List[str] | None" = None,
 ) -> None:
     """Render Module 1 + 2 results for a single sample."""
-    import pandas as pd
+    from utils import get_pfas_info
 
     m1 = sr.module1
     m2 = sr.module2
 
-    status_icon = {"PROCEED": "🟢", "CONDITIONAL": "🟡", "CRITICAL": "🔴"}.get(sr.sample_status, "⚪")
-
     with st.expander(
-        f"{status_icon}  Sample: **{sr.sample_name}**  |  "
-        f"Status: {sr.sample_status}  |  "
-        f"Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}",
+        f"Sample: **{sr.sample_name}**  ·  {sr.sample_status.capitalize()}  ·  "
+        f"Total PFAS {format_conc_auto(m1.total_conc_mg_L)}",
         expanded=expanded,
     ):
         # ── Module 1 ──────────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">Module 1 — PFAS Composition Analysis</div>',
-                    unsafe_allow_html=True)
+        _subheading("PFAS composition (Module 1)")
 
         if m1.species:
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            with mc1:
-                st.markdown(
-                    f'<div class="metric-card"><div class="val">{format_conc_auto(m1.total_conc_mg_L)}</div>'
-                    f'<div class="lbl">Total PFAS (detected)</div></div>',
-                    unsafe_allow_html=True,
-                )
-            with mc2:
-                st.markdown(
-                    f'<div class="metric-card"><div class="val">{len(m1.primary_set)}</div>'
-                    f'<div class="lbl">Primary Set (Top5 + ≥5%)</div></div>',
-                    unsafe_allow_html=True,
-                )
-            with mc3:
-                st.markdown(
-                    f'<div class="metric-card"><div class="val">{format_pct(m1.top5_cumulative_pct)}</div>'
-                    f'<div class="lbl">Top-5 cumulative %</div></div>',
-                    unsafe_allow_html=True,
-                )
-            with mc4:
-                st.markdown(
-                    f'<div class="metric-card"><div class="val">{format_pct(m1.other_fraction_pct)}</div>'
-                    f'<div class="lbl">Other fraction %</div></div>',
-                    unsafe_allow_html=True,
-                )
-
-            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-            # Species table
-            rows = [
-                {
-                    "Analyte": s.name,
-                    "Full Name": s.full_name,
-                    "Category": CATEGORY_LABELS.get(s.category, s.category),
-                    "Concentration": format_conc_auto(s.conc_mg_L),
-                    "% of Total": f"{s.percentage:.1f}%",
-                    "Primary Set": "✓" if s.in_primary_set else "",
-                }
-                for s in m1.species
-                if s.conc_mg_L > 0 or s.in_primary_set
-            ]
-            if rows:
-                st.dataframe(
-                    pd.DataFrame(rows),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Primary Set": st.column_config.TextColumn(width="small"),
-                        "% of Total": st.column_config.TextColumn(width="small"),
-                    },
-                )
-
-            # Category breakdown
+            _kv_table([
+                ("Total PFAS (detected)", format_conc_auto(m1.total_conc_mg_L)),
+                ("Primary set (top 5, ≥5%)", str(len(m1.primary_set))),
+                ("Top-5 cumulative", format_pct(m1.top5_cumulative_pct)),
+                ("Other fraction", format_pct(m1.other_fraction_pct)),
+            ])
+            _html_table(
+                [
+                    {
+                        "Analyte": s.name,
+                        "Full name": s.full_name,
+                        "Category": CATEGORY_LABELS.get(s.category, s.category),
+                        "Concentration": format_conc_auto(s.conc_mg_L),
+                        "% of total": f"{s.percentage:.1f}",
+                        "Primary set": "Yes" if s.in_primary_set else "",
+                    }
+                    for s in m1.species
+                    if s.conc_mg_L > 0 or s.in_primary_set
+                ],
+                num_cols=("Concentration", "% of total"),
+                code_cols=("Analyte",),
+            )
             if m1.category_fractions:
-                st.markdown("**Composition by Category:**")
-                cat_items = sorted(m1.category_fractions.items(), key=lambda x: -x[1])
-                cat_cols = st.columns(min(len(cat_items), 4))
-                for i, (cat, frac) in enumerate(cat_items):
-                    if frac > 0.001:
-                        with cat_cols[i % len(cat_cols)]:
-                            st.metric(
-                                label=CATEGORY_LABELS.get(cat, cat).split(" (")[0],
-                                value=format_pct(frac * 100),
-                            )
-        else:
-            if nd_species:
-                st.warning(
-                    f"All {len(nd_species)} analyte(s) in this sample are **below the detection limit (ND)**. "
-                    "No concentrations were quantified — values shown as ND/non-detect in the source file."
-                )
-                nd_rows = [
+                _html_table(_category_rows(m1), num_cols=("Share of total",))
+        elif nd_species:
+            _note(
+                f"All {len(nd_species)} analyte(s) in this sample are below the detection "
+                "limit (ND). No concentrations were quantified.",
+                "warning",
+            )
+            _html_table(
+                [
                     {
                         "Analyte": name,
-                        "Full Name": __import__("utils").get_pfas_info(name).get("full_name", name),
+                        "Full name": get_pfas_info(name).get("full_name", name),
                         "Category": CATEGORY_LABELS.get(
-                            __import__("utils").get_pfas_info(name).get("category", "unknown"), "Unclassified"
+                            get_pfas_info(name).get("category", "unknown"), "Unclassified"
                         ),
                         "Result": "< MDL (ND)",
                     }
                     for name in nd_species
-                ]
-                st.dataframe(pd.DataFrame(nd_rows), use_container_width=True, hide_index=True)
-                st.caption(
-                    "ND species are excluded from totals per spec policy (do_not_assume_zero = true). "
-                    "No treatment flag can be raised without a quantified concentration."
-                )
-            else:
-                st.warning("No concentration data for this sample.")
+                ],
+                code_cols=("Analyte",),
+            )
+            st.caption(
+                "ND species are excluded from totals (do_not_assume_zero). "
+                "No treatment flag can be raised without a quantified concentration."
+            )
+        else:
+            _note("No concentration data for this sample.", "warning")
 
-        # ── TOF / AOF Coverage inline summary ────────────────────────────────
-        # Surfaces the key "unknown PFAS" question right in the Profile Summary,
-        # before the detailed TOF section below.
+        # ── TOF / AOF coverage ────────────────────────────────────────────────
         if sr.tof_result is not None:
             tof = sr.tof_result
             cov_pct = tof.coverage_ratio * 100
             if tof.unknown_pfas_flag:
-                _tof_bg = "#FFF1F2"; _tof_border = "#FF3B30"; _tof_dot = "#FF3B30"
-                _tof_note = (
-                    f"Only <strong>{cov_pct:.1f}%</strong> of reported "
-                    f"{tof.measured_type} is accounted for by identified species. "
-                    "A significant unknown PFAS fraction is present — "
-                    "treatment efficacy for unidentified species cannot be guaranteed."
+                sev, verdict = "critical", (
+                    f"Only {cov_pct:.1f}% of reported {tof.measured_type} is accounted for by "
+                    "identified species. A significant unknown PFAS fraction is present, so "
+                    "treatment of the unidentified species cannot be guaranteed."
                 )
             else:
-                _tof_bg = "#F0FFF5"; _tof_border = "#34C759"; _tof_dot = "#34C759"
-                _tof_note = (
-                    f"Identified species account for <strong>{cov_pct:.1f}%</strong> of "
-                    f"reported {tof.measured_type} — good coverage, low unknown-PFAS risk."
+                sev, verdict = "ok", (
+                    f"Identified species account for {cov_pct:.1f}% of reported "
+                    f"{tof.measured_type}: good coverage, low unknown-PFAS risk."
                 )
-            st.markdown(
-                f'<div style="background:{_tof_bg}; border-left:4px solid {_tof_border}; '
-                f'border-radius:10px; padding:12px 16px; margin:0; font-size:0.86rem; line-height:1.6;">'
-                f'<span style="display:inline-block; width:8px; height:8px; border-radius:50%; '
-                f'background:{_tof_dot}; margin-right:9px; vertical-align:1px;"></span>'
-                f'<strong>TOF/AOF Coverage:</strong> '
-                f'Theoretical TOF {format_conc_auto(tof.theoretical_tof_mg_L)} as F &nbsp;|&nbsp; '
-                f'Reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)} as F &nbsp;|&nbsp; '
-                f'Coverage {cov_pct:.1f}%<br>'
-                f'<span style="font-size:0.80rem; opacity:0.8;">{_tof_note}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
+            _note(
+                f"<strong>TOF/AOF coverage.</strong> Theoretical TOF "
+                f"{format_conc_auto(tof.theoretical_tof_mg_L)} as F; reported "
+                f"{tof.measured_type} {format_conc_auto(tof.measured_mg_L)} as F; "
+                f"coverage {cov_pct:.1f}%.",
+                sev,
+                detail=verdict,
             )
 
-        # ── M1 flags (e.g. MAX-UNKNOWN) ───────────────────────────────────────
-        for f in m1.flags:
-            _render_flag(f)
+        _flags_table(m1.flags)
 
-        # ── Average Case Analysis (steady-state, for stat-summary datasets) ───
+        # ── Average case (steady-state, for stat-summary datasets) ───────────
         if getattr(sr, "avg_module1", None) is not None:
             avg_m1 = sr.avg_module1
             with st.expander(
-                f"Average / Steady-State PFAS Profile  |  "
-                f"Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}",
+                f"Average / steady-state profile  ·  Total PFAS {format_conc_auto(avg_m1.total_conc_mg_L)}",
                 expanded=False,
             ):
                 st.caption(
-                    "Steady-state operating concentrations (Average). "
-                    "Equipment is sized on the Maximum (worst-case) above; "
-                    "this view shows the expected day-to-day loading."
+                    "Steady-state operating concentrations (average). Equipment is sized on the "
+                    "maximum (worst case) above; this shows the expected day-to-day loading."
                 )
                 if avg_m1.species:
-                    import pandas as _pd
-                    avg_rows = [
-                        {
-                            "Analyte": s.name,
-                            "Full Name": s.full_name,
-                            "Avg Concentration": format_conc_auto(s.conc_mg_L),
-                            "% of Avg Total": f"{s.percentage:.1f}%",
-                            "Category": CATEGORY_LABELS.get(s.category, s.category),
-                        }
-                        for s in avg_m1.species
-                        if s.conc_mg_L > 0
-                    ]
-                    if avg_rows:
-                        st.dataframe(
-                            _pd.DataFrame(avg_rows),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-                    # Category fractions
+                    _html_table(
+                        [
+                            {
+                                "Analyte": s.name,
+                                "Full name": s.full_name,
+                                "Avg concentration": format_conc_auto(s.conc_mg_L),
+                                "% of avg total": f"{s.percentage:.1f}",
+                                "Category": CATEGORY_LABELS.get(s.category, s.category),
+                            }
+                            for s in avg_m1.species
+                            if s.conc_mg_L > 0
+                        ],
+                        num_cols=("Avg concentration", "% of avg total"),
+                        code_cols=("Analyte",),
+                    )
                     if avg_m1.category_fractions:
-                        avg_cat_items = sorted(
-                            avg_m1.category_fractions.items(), key=lambda x: -x[1]
-                        )
-                        avg_cat_cols = st.columns(min(len(avg_cat_items), 4))
-                        for i, (cat, frac) in enumerate(avg_cat_items):
-                            if frac > 0.001:
-                                with avg_cat_cols[i % len(avg_cat_cols)]:
-                                    st.metric(
-                                        label=CATEGORY_LABELS.get(cat, cat).split(" (")[0],
-                                        value=format_pct(frac * 100),
-                                    )
+                        _html_table(_category_rows(avg_m1), num_cols=("Share of total",))
 
         # ── Module 2 ──────────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">Module 2 — Species-Based Reactivity Screening</div>',
-                    unsafe_allow_html=True)
-
+        _subheading("Reactivity screening (Module 2)")
         if not m2.flags:
-            st.info("No reactivity flags triggered.")
+            st.markdown('<div class="muted">No reactivity flags triggered.</div>',
+                        unsafe_allow_html=True)
         else:
-            for f in m2.flags:
-                _render_flag(f)
+            _flags_table(m2.flags)
 
         if m2.treatment_implications:
-            st.markdown("**Treatment Implications:**")
-            for item in m2.treatment_implications:
-                st.markdown(f"- {item}")
+            _subheading("Treatment implications")
+            st.markdown(
+                '<ul class="rpt-list">'
+                + "".join(f"<li>{item}</li>" for item in m2.treatment_implications)
+                + "</ul>",
+                unsafe_allow_html=True,
+            )
 
         if m2.operating_scenarios:
-            with st.expander("Operating Scenario Details"):
+            with st.expander("Operating scenario details"):
                 for sc in m2.operating_scenarios:
                     st.markdown(f"- {sc}")
 
 
-def _render_module3(m3: Module3Result) -> None:
-    """Render Module 3 water matrix screening results — spec-aligned parameters."""
-    import pandas as pd
+_MATRIX_STATUS = {"🟢": ("ok", "OK"), "🟡": ("warning", "Watch"), "🔴": ("critical", "Concern")}
+_MATRIX_SPEC = {
+    "COD": "Required", "TOC": "Required", "nitrate": "Required", "NO2": "Required",
+    "nitrite": "Required", "UV254": "Recommended", "UVT254": "Recommended",
+}
 
-    # All recognised matrix parameters (spec required + supplementary)
+
+def _render_module3(m3: Module3Result, num: str | None = None) -> None:
+    """Render Module 3 water matrix screening results."""
     _MATRIX_UNITS = {
         "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
         "BOD": "mg/L",
@@ -883,33 +746,33 @@ def _render_module3(m3: Module3Result) -> None:
         "magnesium": "mg/L", "boron": "mg/L", "selenium": "mg/L",
     }
     _MATRIX_NICE = {
-        "COD":         "COD (Chemical Oxygen Demand) ★",
-        "TOC":         "TOC (Total Organic Carbon) ★",
-        "DOC":         "DOC (Dissolved Organic Carbon)",
-        "BOD":         "BOD₅ (Biological Oxygen Demand)",
-        "nitrate":     "Nitrate NO₃⁻ ★",
-        "NO2":         "Nitrite NO₂⁻ ★",
-        "nitrite":     "Nitrite NO₂⁻ ★",       # fallback key
-        "ammonia":     "Ammonia / Ammonium (NH₃/NH₄⁺)",
-        "TKN":         "TKN (Total Kjeldahl Nitrogen)",
-        "TN":          "Total Nitrogen",
-        "TP":          "Total Phosphorus",
+        "COD":         "COD (chemical oxygen demand)",
+        "TOC":         "TOC (total organic carbon)",
+        "DOC":         "DOC (dissolved organic carbon)",
+        "BOD":         "BOD₅ (biological oxygen demand)",
+        "nitrate":     "Nitrate NO₃⁻",
+        "NO2":         "Nitrite NO₂⁻",
+        "nitrite":     "Nitrite NO₂⁻",
+        "ammonia":     "Ammonia / ammonium (NH₃/NH₄⁺)",
+        "TKN":         "TKN (total Kjeldahl nitrogen)",
+        "TN":          "Total nitrogen",
+        "TP":          "Total phosphorus",
         "phosphate":   "Phosphate (PO₄³⁻)",
-        "UV254":       "UV₂₅₄ Absorbance ☆",
-        "UVT254":      "UV₂₅₄ Transmittance ☆",
+        "UV254":       "UV₂₅₄ absorbance",
+        "UVT254":      "UV₂₅₄ transmittance",
         "chloride":    "Chloride Cl⁻",
         "fluoride":    "Fluoride F⁻",
-        "hardness":    "Total Hardness",
-        "alkalinity":  "Total Alkalinity",
-        "TDS":         "TDS (Total Dissolved Solids)",
+        "hardness":    "Total hardness",
+        "alkalinity":  "Total alkalinity",
+        "TDS":         "TDS (total dissolved solids)",
         "sulfate":     "Sulfate SO₄²⁻",
         "pH":          "pH",
         "turbidity":   "Turbidity",
-        "TSS":         "TSS (Total Suspended Solids)",
+        "TSS":         "TSS (total suspended solids)",
         "temperature": "Temperature",
         "conductivity":"Conductivity",
-        "flow_rate":   "Flow Rate",
-        "sample_color":"Sample Color",
+        "flow_rate":   "Flow rate",
+        "sample_color":"Sample color",
         "iron":        "Iron (Fe)",
         "manganese":   "Manganese (Mn)",
         "copper":      "Copper (Cu)",
@@ -929,50 +792,35 @@ def _render_module3(m3: Module3Result) -> None:
         "selenium":    "Selenium (Se)",
     }
 
-    st.markdown('<div class="section-header">Module 3 — Water Matrix Screening</div>',
-                unsafe_allow_html=True)
-
-    st.caption(
-        "★ Required by spec  ☆ Recommended by spec  "
-        "| Traffic light: 🟢 OK · 🟡 Watch · 🔴 Concern · ⚪ No threshold"
-    )
+    _heading("Water matrix screening (Module 3)", num)
 
     if m3.detected_params:
-        param_rows = [
-            {
-                "Status": _param_traffic_light(k, v),
-                "Parameter": _MATRIX_NICE.get(k, k),
-                "Value": (
-                    f"{v:.4g}" if isinstance(v, float) and v == v else str(v)
-                ),
-                "Unit": _MATRIX_UNITS.get(k, ""),
-            }
-            for k, v in m3.detected_params.items()
-        ]
-        st.dataframe(
-            pd.DataFrame(param_rows),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Status": st.column_config.TextColumn(width="small"),
-                "Value":  st.column_config.TextColumn(width="small"),
-                "Unit":   st.column_config.TextColumn(width="small"),
-            },
-        )
+        rows = []
+        for k, v in m3.detected_params.items():
+            sev, label = _MATRIX_STATUS.get(_param_traffic_light(k, v), ("none", ""))
+            rows.append({
+                "Parameter": html.escape(_MATRIX_NICE.get(k, k)),
+                "Value": html.escape(f"{v:.4g}" if isinstance(v, float) and v == v else str(v)),
+                "Unit": html.escape(_MATRIX_UNITS.get(k, "")),
+                "Screening": _sev_html(sev, label) if label else '<span class="muted">No threshold</span>',
+                "Spec": _MATRIX_SPEC.get(k, ""),
+            })
+        _html_table(rows, num_cols=("Value",), html_cols=("Parameter", "Value", "Unit", "Screening"))
     else:
-        st.info(
-            "No water matrix parameters detected. "
-            "Paste them into the text input — e.g. 'COD = 120 mg/L, nitrate = 8 mg/L, hardness = 150 mg/L, chloride = 200 mg/L'."
+        st.markdown(
+            '<div class="muted">No water matrix parameters detected. Add them to the notes, '
+            'e.g. "COD = 120 mg/L, nitrate = 8 mg/L, hardness = 150 mg/L".</div>',
+            unsafe_allow_html=True,
         )
 
     if m3.missing_required_params:
-        st.error(
-            "**Required matrix parameters missing:** " +
-            " | ".join(m3.missing_required_params),
+        _note(
+            "<strong>Required matrix parameters missing:</strong> "
+            + ", ".join(html.escape(str(p)) for p in m3.missing_required_params),
+            "critical",
         )
 
-    for f in m3.flags:
-        _render_flag(f)
+    _flags_table(m3.flags)
 
     if m3.missing_params:
         st.caption(f"Not provided: {', '.join(str(p) for p in m3.missing_params)}")
@@ -1086,93 +934,80 @@ def _build_text_report(result: EvaluationResult) -> str:
 
 
 def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | None" = None) -> None:
-    """Render the full structured technical report."""
-    # ── Overall Status Banner ─────────────────────────────────────────────────
-    st.markdown('<div class="section-header">Overall Evaluation Status</div>',
-                unsafe_allow_html=True)
+    """Render the full technical report as numbered report sections."""
+    sec = iter(range(1, 20))
 
-    status_col, reason_col = st.columns([1, 3])
-    with status_col:
-        st.markdown(status_badge_html(result.overall_status), unsafe_allow_html=True)
-        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-        src_str = ", ".join(result.data_sources) if result.data_sources else "N/A"
-        st.caption(f"Sources: {src_str}")
-
-    with reason_col:
-        for reason in result.status_reasons:
-            st.markdown(f"- {reason}")
-
-    # ── Variability Banner (uniform block geometry: 12/16 pad, 4px left border)
-    if result.variability_flag:
-        vf = result.variability_flag
-        if vf.severity == "info":
-            # Stat-range note (Average + Maximum from same stream)
-            _vbg  = "#F0F5FF"; _vaccent = "#007AFF"; _vcolor = "#1E40AF"
-            _vkey = vf.rule_id
-        else:
-            # True high-variability warning
-            _vbg  = "#FFFBEB"; _vaccent = "#FF9500"; _vcolor = "#5C3D00"
-            _vkey = "M1-VAR"
+    # ── 1 Summary ─────────────────────────────────────────────────────────────
+    _heading("Summary", str(next(sec)))
+    src_str = ", ".join(result.data_sources) if result.data_sources else "n/a"
+    st.markdown(
+        f'<div class="status-line">Overall status: '
+        f'{_sev_html(_STATUS_SEV.get(result.overall_status, "none"), result.overall_status)}'
+        f'<span class="muted" style="margin-left:18px;">Sources: {html.escape(src_str)}</span></div>',
+        unsafe_allow_html=True,
+    )
+    if result.status_reasons:
         st.markdown(
-            f'<div style="background:{_vbg}; border-left:4px solid {_vaccent}; border-radius:10px; '
-            f'padding:12px 16px; font-size:0.86rem; line-height:1.6; color:{_vcolor}; margin:0;">'
-            f'<span style="display:inline-block; width:8px; height:8px; border-radius:50%; '
-            f'background:{_vaccent}; margin-right:9px; vertical-align:1px;"></span>'
-            f'<strong>[{_vkey}]</strong> '
-            f'{vf.message}<br>'
-            f'<span style="font-size:0.80rem; opacity:0.75;">{vf.detail}</span>'
-            f'</div>',
+            '<ol class="rpt-list">'
+            + "".join(f"<li>{r}</li>" for r in result.status_reasons)
+            + "</ol>",
             unsafe_allow_html=True,
         )
+
+    if result.variability_flag:
+        vf = result.variability_flag
+        _note(
+            f'<span class="mono">{html.escape(str(vf.rule_id if vf.severity == "info" else "M1-VAR"))}</span> '
+            f"{vf.message}",
+            "info" if vf.severity == "info" else "warning",
+            detail=vf.detail or "",
+        )
     elif result.variability_ratio is not None:
-        st.caption(f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)")
+        st.caption(
+            f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)"
+        )
 
-    # ── Analytical Feasibility (AN-1: ultra-low target / drinking water) ─────
+    # ── Analytical feasibility (AN-1) ─────────────────────────────────────────
     if getattr(result, "analytical_flag", None):
-        st.markdown('<div class="section-header">Analytical Feasibility</div>',
-                    unsafe_allow_html=True)
-        _render_flag(result.analytical_flag)
+        _heading("Analytical feasibility", str(next(sec)))
+        _flags_table([result.analytical_flag])
 
-    # ── Project Context (throughput, site, customer) ─────────────────────────
+    # ── Project context ───────────────────────────────────────────────────────
     if parsed and parsed.llm_project_context:
         ctx = parsed.llm_project_context
-        ctx_items: list[str] = []
-        if ctx.get("customer_name"):
-            ctx_items.append(f"**Customer:** {ctx['customer_name']}")
-        if ctx.get("site_name"):
-            ctx_items.append(f"**Site:** {ctx['site_name']}")
-        if ctx.get("country"):
-            ctx_items.append(f"**Country:** {ctx['country']}")
+        pairs: list[tuple[str, str]] = []
+        for key, label in (("customer_name", "Customer"), ("site_name", "Site"), ("country", "Country")):
+            if ctx.get(key):
+                pairs.append((label, str(ctx[key])))
+        gpm = ctx.get("throughput_gpm")
         if ctx.get("flow_rate_display"):
-            gpm = ctx.get("throughput_gpm")
-            gpm_str = f" → **{gpm:.0f} GPM**" if gpm else ""
-            flag_str = " — **>100 GPM, large-scale flag**" if (gpm and gpm > 100) else ""
-            ctx_items.append(f"**Throughput:** {ctx['flow_rate_display']}{gpm_str}{flag_str}")
-        elif ctx.get("throughput_gpm"):
-            gpm = ctx["throughput_gpm"]
-            flag_str = " — **>100 GPM, large-scale flag**" if gpm > 100 else ""
-            ctx_items.append(f"**Throughput:** {gpm:.0f} GPM{flag_str}")
-        if ctx_items:
-            st.markdown('<div class="section-header">Project Context</div>', unsafe_allow_html=True)
-            st.markdown("  &nbsp;&nbsp;".join(ctx_items))
-            if ctx.get("throughput_gpm") and float(ctx["throughput_gpm"]) > 100:
-                st.warning(
-                    f"**Large-scale application** — {ctx['throughput_gpm']:.0f} GPM exceeds the "
-                    "100 GPM threshold. Full commercial & engineering review required before quoting.",
-                    icon=None,
+            pairs.append(("Throughput", ctx["flow_rate_display"] + (f" ({gpm:.0f} GPM)" if gpm else "")))
+        elif gpm:
+            pairs.append(("Throughput", f"{gpm:.0f} GPM"))
+        if pairs:
+            _heading("Project context", str(next(sec)))
+            _html_table([{"Item": k, "Value": v} for k, v in pairs])
+            if gpm and float(gpm) > 100:
+                _note(
+                    f"<strong>Large-scale application.</strong> {float(gpm):.0f} GPM exceeds the "
+                    "100 GPM threshold. Full commercial and engineering review is required before quoting.",
+                    "warning",
                 )
 
-    # ── Missing Information ───────────────────────────────────────────────────
+    # ── Missing information ───────────────────────────────────────────────────
     if result.missing_info:
-        with st.expander("Missing / Required Information", expanded=True):
-            st.markdown("The following information was not found in uploaded materials:")
-            for item in result.missing_info:
-                st.markdown(f"- {item}")
+        _heading("Missing information", str(next(sec)))
+        st.markdown(
+            '<div class="muted">Not found in the uploaded material:</div><ul class="rpt-list">'
+            + "".join(f"<li>{item}</li>" for item in result.missing_info)
+            + "</ul>",
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("---")
-
-    # ── Per-Sample Sections ───────────────────────────────────────────────────
+    # ── Per-sample results ────────────────────────────────────────────────────
     n_samples = len(result.samples)
+    if n_samples:
+        _heading("PFAS results by sample" if n_samples > 1 else "PFAS results", str(next(sec)))
     nd_lookup = parsed.nd_species if parsed else {}
     for i, sr in enumerate(result.samples):
         _render_sample_section(
@@ -1181,22 +1016,23 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
             nd_species=nd_lookup.get(sr.sample_name),
         )
 
-    # ── Module 3: Water Matrix ────────────────────────────────────────────────
-    _render_module3(result.module3)
+    # ── Water matrix ──────────────────────────────────────────────────────────
+    _render_module3(result.module3, str(next(sec)))
 
-    # ── Treatment Summary ─────────────────────────────────────────────────────
+    # ── Treatment guidance ────────────────────────────────────────────────────
     if result.treatment_summary:
-        st.markdown('<div class="section-header">Treatment Technology Guidance</div>',
-                    unsafe_allow_html=True)
-        for item in result.treatment_summary:
-            st.markdown(f"- {item}")
+        _heading("Treatment technology guidance", str(next(sec)))
+        st.markdown(
+            '<ul class="rpt-list">'
+            + "".join(f"<li>{item}</li>" for item in result.treatment_summary)
+            + "</ul>",
+            unsafe_allow_html=True,
+        )
 
-    # ── Download ──────────────────────────────────────────────────────────────
-    st.markdown("---")
-    report_text = _build_text_report(result)
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.download_button(
-        "Download Full Technical Report (.txt)",
-        data=report_text,
+        "Download technical report (.txt)",
+        data=_build_text_report(result),
         file_name="PFAS_Evaluation_Report.txt",
         mime="text/plain",
     )
@@ -1206,11 +1042,8 @@ def _render_email_draft(result: EvaluationResult, email_text_override: str | Non
     """Render the business email draft tab."""
     email_text = email_text_override if email_text_override is not None else result.email_draft
 
-    st.markdown('<div class="section-header">Internal Business Email Draft</div>',
-                unsafe_allow_html=True)
-    st.caption(
-        "Auto-generated from evaluation output. Review and edit as needed before sending."
-    )
+    _heading("Internal email draft")
+    st.caption("Generated from the evaluation output. Review and edit before sending.")
     st.markdown(
         f'<div class="email-box">{email_text}</div>',
         unsafe_allow_html=True,
@@ -1218,7 +1051,7 @@ def _render_email_draft(result: EvaluationResult, email_text_override: str | Non
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
-            "Download Email Draft (.txt)",
+            "Download email draft (.txt)",
             data=email_text,
             file_name="PFAS_Email_Draft.txt",
             mime="text/plain",
@@ -1237,8 +1070,7 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
     """Render parser and engine diagnostic logs."""
     import pandas as pd
 
-    st.markdown('<div class="section-header">Parser & Engine Trace</div>',
-                unsafe_allow_html=True)
+    _heading("Parser and engine trace")
 
     if result.logs:
         st.code("\n".join(str(x) for x in result.logs), language="text")
@@ -1316,17 +1148,14 @@ _SCHEDULE_TIMEPOINTS = {
 def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
     """Render one bench test plan as editable fields; return nothing (state via widget keys)."""
     k = f"plan{idx}"
-    st.markdown(
-        f'<div class="section-header">Bench Test Plan — {plan.sample_name}</div>',
-        unsafe_allow_html=True,
-    )
+    _heading(f"Bench test plan: {html.escape(str(plan.sample_name))}", str(idx + 1))
     st.caption(
-        f"Total PFAS: {format_conc_auto(plan.total_pfas_mg_L)} &nbsp;·&nbsp; "
-        "750 mL Amazon Reactor &nbsp;·&nbsp; Proof-of-Concept · all fields editable"
+        f"Total PFAS {format_conc_auto(plan.total_pfas_mg_L)}  ·  "
+        "750 mL Amazon Reactor  ·  Proof of concept. All fields are editable."
     )
 
     # ── Reaction conditions ──────────────────────────────────────────────────
-    st.markdown("**Reaction Conditions**")
+    _subheading("Reaction conditions")
     cc1, cc2 = st.columns(2)
     with cc1:
         st.markdown(f"*{plan.conditions[0].label}*")
@@ -1347,7 +1176,7 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
             st.caption("Equals the reference (no adjustment needed for this water).")
 
     # ── Sampling schedule ────────────────────────────────────────────────────
-    st.markdown("**Sampling Schedule**")
+    _subheading("Sampling schedule")
     sched_keys = list(_SCHEDULE_LABELS.keys())
     sel = st.selectbox(
         "Schedule", options=sched_keys,
@@ -1359,19 +1188,19 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
     st.caption(plan.schedule_rationale)
 
     # ── Pretreatment / dilution ──────────────────────────────────────────────
-    st.markdown("**Pretreatment**")
+    _subheading("Pretreatment")
     st.text_area("Pretreatment", value="\n".join(plan.pretreatment),
                  key=f"{k}_pre", label_visibility="collapsed", height=90)
     st.text_input("Dilution", value=plan.dilution, key=f"{k}_dil")
 
     # ── pH ───────────────────────────────────────────────────────────────────
-    st.markdown("**pH**")
+    _subheading("pH")
     st.number_input("Reaction pH setpoint", min_value=0.0, max_value=14.0, step=0.5,
                     value=float(plan.reaction_ph), key=f"{k}_ph")
     st.caption(plan.ph_monitoring)
 
     # ── External TOF ─────────────────────────────────────────────────────────
-    st.markdown("**External TOF (Novem)**")
+    _subheading("External TOF (Novem)")
     tof_val = plan.external_tof + (("\n" + plan.fluoride_handling) if plan.fluoride_handling else "")
     st.text_area("External TOF", value=tof_val, key=f"{k}_tof",
                  label_visibility="collapsed", height=90)
@@ -1384,7 +1213,7 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
 
     # ── Download (reads current edited widget values) ────────────────────────
     st.download_button(
-        "Download This Plan (.txt)",
+        "Download this plan (.txt)",
         data=_plan_export_from_state(plan, idx),
         file_name=f"BenchTestPlan_{plan.sample_name}.txt".replace(" ", "_"),
         mime="text/plain",
@@ -1438,28 +1267,16 @@ def _plan_export_from_state(plan: "TestPlan", idx: int) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PROGRESS RING HELPER
+# PROGRESS INDICATOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_EVAL_STATUS_MSG = "Processing uploaded files through Claros PFAS Evaluation Engine"
-
 def _render_progress_circle(pct: int) -> str:
-    """Render an SVG circular progress ring with percentage."""
-    r = 44
-    circumference = 2 * 3.14159 * r   # ≈ 276.5
-    offset = circumference * (1 - max(0, min(100, pct)) / 100)
+    """Thin progress bar with a plain status line."""
+    pct = max(0, min(100, pct))
     return (
-        '<div class="progress-ring-container">'
-        '<div class="progress-ring-wrapper">'
-        '<svg viewBox="0 0 100 100">'
-        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="#E5E5EA" stroke-width="9"/>'
-        f'<circle cx="50" cy="50" r="{r}" fill="none" stroke="#007AFF" stroke-width="9"'
-        f' stroke-dasharray="{circumference:.1f}" stroke-dashoffset="{offset:.1f}"'
-        f' stroke-linecap="round" transform="rotate(-90 50 50)"/>'
-        '</svg>'
-        f'<div class="progress-ring-pct">{pct}%</div>'
-        '</div>'
-        f'<div class="progress-ring-label">{_EVAL_STATUS_MSG}</div>'
+        '<div class="prog">'
+        f'Reading inputs and running the evaluation: {pct}%'
+        f'<div class="prog-bar"><div style="width:{pct}%"></div></div>'
         '</div>'
     )
 
@@ -1485,10 +1302,13 @@ result: EvaluationResult | None = st.session_state.eval_result
 
 st.markdown(
     """
-    <div class="pfas-header">
-        <h1>PFAS Material Evaluation Engine</h1>
-        <div class="subtitle">Claros Product Development &nbsp;·&nbsp; Preliminary Treatment Feasibility Screening</div>
-        <div class="byline">Lead Framework by Zack Liu &nbsp;·&nbsp; Internal Product Development Use Only</div>
+    <div class="rpt-header">
+        <div>
+            <div class="org">Claros Product Development</div>
+            <h1>PFAS Material Evaluation Engine</h1>
+            <div class="sub">Preliminary treatment feasibility screening</div>
+        </div>
+        <div class="meta">Lead framework: Zack Liu<br>Internal Product Development use only · v1.0</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -1501,33 +1321,33 @@ st.markdown(
 inp_a, inp_b, inp_c, inp_d = st.columns([1, 1, 1.5, 1.5], gap="medium")
 
 with inp_a:
-    st.markdown('<div class="input-label">Excel PFAS Data</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">Lab data (Excel)</div>', unsafe_allow_html=True)
     excel_files = st.file_uploader(
         "Excel",
         type=["xlsx", "xls", "csv"],
         accept_multiple_files=True,
         help=(
-            "Column A = PFAS analyte names, Columns B+ = sample concentrations. "
-            "Unit detected automatically. Multiple files allowed."
+            "PFAS results and/or general water chemistry. Units are detected automatically. "
+            "Multiple files allowed."
         ),
         label_visibility="collapsed",
     )
 
 with inp_b:
-    st.markdown('<div class="input-label">PDF Lab Report</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">Lab reports (PDF)</div>', unsafe_allow_html=True)
     pdf_files = st.file_uploader(
         "PDF",
         type=["pdf"],
         accept_multiple_files=True,
         help=(
-            "PDF lab reports with quantified PFAS results. Table and text-based PDFs supported. "
+            "PFAS or general-chemistry lab reports. Table and text-based PDFs supported. "
             "Multiple files allowed."
         ),
         label_visibility="collapsed",
     )
 
 with inp_c:
-    st.markdown('<div class="input-label">Customer Email / Notes</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">Customer email / notes</div>', unsafe_allow_html=True)
     email_text = st.text_area(
         "Notes",
         height=110,
@@ -1538,7 +1358,7 @@ with inp_c:
         help="Scanned for PFAS species, inline concentrations, and matrix parameters.",
         label_visibility="collapsed",
     )
-    st.markdown('<div class="input-sublabel">Attach email PDFs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-sublabel">Email PDFs</div>', unsafe_allow_html=True)
     notes_pdfs = st.file_uploader(
         "Email PDFs",
         type=["pdf"],
@@ -1546,13 +1366,13 @@ with inp_c:
         key="notes_pdfs",
         help=(
             "Customer email threads exported to PDF. Their text is read together with the "
-            "notes above. Text-based PDFs only — scanned images cannot be read."
+            "notes above. Text-based PDFs only; scanned images cannot be read."
         ),
         label_visibility="collapsed",
     )
 
 with inp_d:
-    st.markdown('<div class="input-label">Treatment Goals / Context</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-label">Treatment goals / context</div>', unsafe_allow_html=True)
     goals_text = st.text_area(
         "Goals",
         height=110,
@@ -1566,7 +1386,7 @@ with inp_d:
         ),
         label_visibility="collapsed",
     )
-    st.markdown('<div class="input-sublabel">Attach context PDFs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-sublabel">Context PDFs</div>', unsafe_allow_html=True)
     goals_pdfs = st.file_uploader(
         "Context PDFs",
         type=["pdf"],
@@ -1574,7 +1394,7 @@ with inp_d:
         key="goals_pdfs",
         help=(
             "Specs, RFQs or email threads describing treatment goals, flow rate or site context. "
-            "Text-based PDFs only — scanned images cannot be read."
+            "Text-based PDFs only; scanned images cannot be read."
         ),
         label_visibility="collapsed",
     )
@@ -1585,64 +1405,49 @@ _any_input = bool(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONTROLS ROW — parsing mode + source pills + run button
+# CONTROLS ROW — inputs summary + reading mode + run button
 # ═══════════════════════════════════════════════════════════════════════════════
 
-ctrl_a, ctrl_b, ctrl_c = st.columns([2.5, 1, 1], gap="medium")
+ctrl_a, ctrl_b = st.columns([3, 1], gap="medium", vertical_alignment="center")
 
 _api_key = _get_api_key()
 
 with ctrl_a:
-    st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
+    _inputs: list[str] = []
+    if excel_files:
+        _inputs.append(f"Excel ({len(excel_files)})")
+    if pdf_files:
+        _inputs.append(f"PDF ({len(pdf_files)})")
+    if email_text.strip() or notes_pdfs:
+        _inputs.append("customer notes")
+    if goals_text.strip() or goals_pdfs:
+        _inputs.append("treatment goals")
+    st.markdown(
+        '<div class="muted">Inputs: '
+        + (html.escape(", ".join(_inputs)) if _inputs else "none yet. Add a file or paste text above.")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
     if _api_key:
         use_llm = st.toggle(
-            "Enhanced Document Reading",
+            "Enhanced document reading",
             value=True,
             help=(
-                "Use the enhanced document reading mode to extract all data from uploaded files. "
-                "Handles flexible layouts, multilingual labels, statistical-summary detection, "
-                "and large CofA files with 50+ analytes. "
+                "Reads uploaded files with Claude: flexible layouts, multilingual labels, "
+                "statistical-summary detection and large CofA files with 50+ analytes. "
                 "Falls back to standard parsing automatically if unavailable."
             ),
-        )
-        st.markdown(
-            '<span class="src-pill src-on">Enhanced reading available</span>',
-            unsafe_allow_html=True,
         )
     else:
         use_llm = False
         st.markdown(
-            '<span class="src-pill src-off">Enhanced reading unavailable — API key not configured</span>',
+            '<div class="muted">Enhanced document reading is off (no API key configured); '
+            "standard parsing is used.</div>",
             unsafe_allow_html=True,
         )
 
 with ctrl_b:
-    st.markdown('<div class="section-header">Active Sources</div>', unsafe_allow_html=True)
-    xl_cls  = "src-on" if excel_files else "src-off"
-    pdf_cls = "src-on" if pdf_files else "src-off"
-    txt_cls = "src-on" if (
-        email_text.strip() or goals_text.strip() or notes_pdfs or goals_pdfs
-    ) else "src-off"
-    xl_lbl  = f"Excel ×{len(excel_files)}" if len(excel_files) > 1 else "Excel"
-    pdf_lbl = f"PDF ×{len(pdf_files)}" if len(pdf_files) > 1 else "PDF"
-    st.markdown(
-        f'<div style="padding-top:4px;">'
-        f'<span class="src-pill {xl_cls}">{xl_lbl}</span>'
-        f'<span class="src-pill {pdf_cls}">{pdf_lbl}</span>'
-        f'<span class="src-pill {txt_cls}">Text</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-with ctrl_c:
-    st.markdown('<div class="section-header">&nbsp;</div>', unsafe_allow_html=True)
-    run_clicked = st.button("Run Evaluation", type="primary")
-
-if not _any_input:
-    st.info(
-        "Upload an Excel file or PDF, or paste text to begin. At least one source is required.",
-        icon="ℹ️",
-    )
+    run_clicked = st.button("Run evaluation", type="primary", key="run_btn")
 
 st.markdown("---")
 
@@ -1657,10 +1462,10 @@ loading_placeholder = st.empty()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 tab_tech, tab_email, tab_plan, tab_debug = st.tabs([
-    "Technical Output",
-    "Business Email Draft",
-    "Bench Test Plan",
-    "Debug / Logs",
+    "Technical report",
+    "Email draft",
+    "Bench test plan",
+    "Logs",
 ])
 
 # ─── Handle Run button ───────────────────────────────────────────────────────
@@ -1784,12 +1589,7 @@ with tab_tech:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">'
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-            '<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/>'
-            '<path d="M8.5 2h7"/><path d="M7 16h10"/></svg>'
-            '</span>'
-            'Technical evaluation output will appear here after running the engine.'
+            'No results yet. Run an evaluation to produce the technical report.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -1801,12 +1601,7 @@ with tab_email:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">'
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-            '<rect width="20" height="16" x="2" y="4" rx="2"/>'
-            '<path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>'
-            '</span>'
-            'Business email draft will be generated after running the evaluation.'
+            'The email draft is written after an evaluation has been run.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -1818,7 +1613,7 @@ with tab_email:
         if llm_email is None and use_llm and _api_key and _parsed_data:
             _email_ph = st.empty()
             _email_ph.markdown(
-                '<div class="email-generating">Preparing business email draft…</div>',
+                '<div class="muted">Writing the email draft…</div>',
                 unsafe_allow_html=True,
             )
             try:
@@ -1850,11 +1645,6 @@ with tab_plan:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">'
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-            '<path d="M14.5 2v17.5c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5V2"/>'
-            '<path d="M8.5 2h7"/><path d="M14.5 16h-5"/></svg>'
-            '</span>'
             'Run an evaluation first. Generate the bench test plan once the physical '
             'water samples have arrived.'
             '</div>',
@@ -1862,10 +1652,10 @@ with tab_plan:
         )
     else:
         st.caption(
-            "Bench-scale Proof-of-Concept plan per sample. Generate this once the samples "
-            "have physically arrived; all recommended values below are editable before export."
+            "Bench-scale proof-of-concept plan per sample. Generate it once the samples "
+            "have physically arrived; every recommended value is editable before export."
         )
-        if st.button("Generate Bench Test Plan", key="gen_plan_btn"):
+        if st.button("Generate bench test plan", key="gen_plan_btn"):
             st.session_state.test_plans = generate_test_plans(
                 result, st.session_state.parsed_data
             )
@@ -1875,9 +1665,9 @@ with tab_plan:
             for _i, _plan in enumerate(_plans):
                 _render_editable_plan(_plan, _i)
         else:
-            st.info(
-                "Click **Generate Bench Test Plan** to build a per-sample test protocol "
-                "from the evaluation results."
+            st.markdown(
+                '<div class="muted">Builds a per-sample test protocol from the evaluation results.</div>',
+                unsafe_allow_html=True,
             )
 
 # ── Tab 4: Debug / Logs ───────────────────────────────────────────────────────
@@ -1885,11 +1675,7 @@ with tab_debug:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">'
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-            '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
-            '</span>'
-            'Parser and engine logs will appear here after running.'
+            'Parser and engine logs appear here after a run.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -1903,10 +1689,9 @@ with tab_debug:
 
 st.markdown(
     """
-    <div class="pfas-footer">
-        PFAS Evaluation Engine v1.0 &nbsp;|&nbsp; Claros Product Development Team &nbsp;|&nbsp;
-        Framework Architecture by Zack Liu &nbsp;|&nbsp;
-        For internal Product Development screening use only — not a substitute for detailed engineering design.
+    <div class="rpt-footer">
+        PFAS Material Evaluation Engine v1.0 · Claros Product Development Team · Framework architecture by Zack Liu.
+        For internal screening only. Not a substitute for detailed engineering design.
     </div>
     """,
     unsafe_allow_html=True,
