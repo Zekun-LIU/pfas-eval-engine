@@ -245,6 +245,14 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     if matrix_params:
         result.matrix_params.update(matrix_params)
         logs.append(f"[Excel] Matrix params auto-extracted: {list(matrix_params.keys())}")
+        if not result.has_pfas_data and not result.nd_species:
+            # A water-quality-only workbook is expected when PFAS results
+            # arrive in a separate file — not a parse failure.
+            result.warnings = [w for w in result.warnings if "PFAS data" not in w]
+            logs.append(
+                f"[Excel] '{filename}': no PFAS results — read as water-quality data "
+                f"({len(matrix_params)} parameter(s))"
+            )
 
     return result
 
@@ -493,6 +501,23 @@ def _parse_excel_sheet(
             )
             return _parse_transposed_excel_sheet(df_raw, sheet_name, filename, logs)
 
+        # No PFAS names anywhere but recognisable water-quality parameters:
+        # this is a general-chemistry sheet. Its values are picked up by the
+        # matrix extractor; reading it as PFAS would invent fake species.
+        def _wq_hits(cells) -> int:
+            return sum(1 for c in cells if _keyword_match(str(c).strip().lower()))
+
+        wq_in_col_a = _wq_hits(df_raw.iloc[:, 0])
+        wq_in_header = max(
+            (_wq_hits(df_raw.iloc[ri]) for ri in range(min(40, len(df_raw)))), default=0
+        )
+        if wq_in_col_a >= 2 or wq_in_header >= 2:
+            logs.append(
+                f"[Excel] Sheet '{sheet_name}': no PFAS analytes, water-quality parameters "
+                "found — treated as a water-quality sheet"
+            )
+            return result
+
         # Fallback: treat row 0 as header, row 1+ as data
         header_row_idx = 0
         data_start_row = 1
@@ -629,6 +654,17 @@ def _parse_excel_sheet(
             continue
 
         analyte = normalize_pfas_name(analyte_raw)
+
+        if (
+            analyte not in PFAS_SPECIES_DB
+            and not _looks_like_pfas(analyte_raw)
+            and _keyword_match(_analyte_lower)
+        ):
+            logs.append(
+                f"[Excel] Row {ri + 1}: {analyte_raw!r} is a water-quality parameter — "
+                "left to matrix extraction"
+            )
+            continue
 
         row_had_numeric = False
         row_had_nd = False
@@ -1050,6 +1086,15 @@ def _parse_unit_from_cell(cell_val: str, default: str = "mg/L") -> str:
     return m.group(1).strip() if m else default
 
 
+_AS_N_FACTOR = {"nitrate": 4.43, "NO2": 3.29, "ammonia": 1.21}
+_AS_N_NAME = re.compile(
+    r"(?:no[23]|nh[34]\+?|nitrate|nitrite|ammonia|ammonium)\s*[-_]?\s*(?:\(?\s*as\s+)?n(?:itrogen)?\b"
+    r"|ammoniacal|azote|stickstoff|stikstof|nitr[oó]geno",
+    re.IGNORECASE,
+)
+_AS_N_UNIT = re.compile(r"\bas\s+n\b|mg\s*-?\s*n\s*/\s*l|mg\s*/\s*l\s*-?\s*n\b", re.IGNORECASE)
+
+
 def _store_param(
     params: Dict[str, float],
     param: str,
@@ -1057,17 +1102,31 @@ def _store_param(
     unit: str,
     label: str,
     logs: List[str],
+    raw_name: str = "",
 ) -> None:
     """Convert value to canonical unit and store in params dict."""
     if param in _MATRIX_NATIVE_UNIT_PARAMS or not unit:
         params[param] = val
         logs.append(f"[Excel Matrix] {label}: {param} = {val} (native)")
+        return
+    as_n = param in _AS_N_FACTOR and bool(
+        _AS_N_NAME.search(raw_name) or _AS_N_UNIT.search(unit)
+    )
+    if as_n:
+        unit = _AS_N_UNIT.sub("", unit).strip() or "mg/L"
+    mg_l = convert_to_mg_L(val, unit)
+    if mg_l is None:
+        mg_l = val  # unknown unit — assume already mg/L
+    if as_n:
+        # Engine thresholds and reagent stoichiometry assume as-ion mg/L
+        mg_l *= _AS_N_FACTOR[param]
+        logs.append(
+            f"[Excel Matrix] {label}: {param} = {mg_l:.2f} mg/L as ion "
+            f"(raw {val} {unit} as N, ×{_AS_N_FACTOR[param]})"
+        )
     else:
-        mg_l = convert_to_mg_L(val, unit)
-        if mg_l is None:
-            mg_l = val  # unknown unit — assume already mg/L
-        params[param] = mg_l
         logs.append(f"[Excel Matrix] {label}: {param} = {mg_l} mg/L  (raw {val} {unit})")
+    params[param] = mg_l
 
 
 def _extract_matrix_from_excel(
@@ -1201,7 +1260,7 @@ def _extract_row_layout_matrix(
         if found_val is None:
             continue
         _store_param(params, matched, found_val, unit,
-                     f"'{sheet_name}' r{ri + 1} (row-layout)", logs)
+                     f"'{sheet_name}' r{ri + 1} (row-layout)", logs, raw_name=cell_val)
 
     if params:
         logs.append(
@@ -1327,7 +1386,7 @@ def _extract_column_layout_matrix(
         if found_val is None:
             continue
         _store_param(params, canonical, found_val, unit,
-                     f"'{sheet_name}' col {ci + 1} (col-layout)", logs)
+                     f"'{sheet_name}' col {ci + 1} (col-layout)", logs, raw_name=header_cell)
 
     if params:
         logs.append(
@@ -1397,6 +1456,12 @@ def parse_pdf(file_bytes: bytes, filename: str) -> ParsedData:
                 logs.append(f"[PDF] Unit '{unit}' detected in document text")
             result.detected_unit = unit
 
+            result.matrix_params = _extract_matrix_from_pdf(all_tables, all_text_lines, logs)
+            if result.matrix_params:
+                logs.append(
+                    f"[PDF] Water-quality params: {list(result.matrix_params.keys())}"
+                )
+
             # Try table parsing first
             if all_tables:
                 table_result = _parse_pdf_tables(all_tables, unit, logs)
@@ -1412,6 +1477,10 @@ def parse_pdf(file_bytes: bytes, filename: str) -> ParsedData:
             result.pfas_samples = text_result.pfas_samples
             if result.has_pfas_data:
                 logs.append(f"[PDF] Text parsing → {len(result.pfas_samples)} sample(s)")
+            elif result.matrix_params:
+                logs.append(
+                    f"[PDF] '{filename}': no PFAS results — read as water-quality data"
+                )
             else:
                 result.warnings.append(
                     "[PDF] Could not extract structured PFAS data. "
@@ -1422,6 +1491,71 @@ def parse_pdf(file_bytes: bytes, filename: str) -> ParsedData:
         result.errors.append(f"[PDF] Parse error: {e}")
 
     return result
+
+
+_PDF_UNIT_TOKEN = re.compile(
+    r"(?:ng|µg|μg|ug|mg|g)(?:\s*-?\s*n)?/[lL](?:-?n)?|ppm|ppb|ppt|ntu|[µuμ]s/cm|ms/cm"
+    r"|°c|%|s\.?u\.?|cm-1|1/cm|/cm|abs",
+    re.IGNORECASE,
+)
+_PDF_PLAIN_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?|\.\d+")
+
+
+def _extract_matrix_from_pdf(
+    tables: List[List[List[Optional[str]]]],
+    lines: List[str],
+    logs: List[str],
+) -> Dict[str, float]:
+    """
+    Water-quality parameters from a PDF lab report. Tables reuse the Excel
+    matrix detectors; text lines are read as "<parameter> <value> <unit>",
+    e.g. "Chloride 120 mg/L 1.0". First occurrence of a parameter wins.
+    """
+    params: Dict[str, float] = {}
+
+    for ti, table in enumerate(tables):
+        df = pd.DataFrame([["" if c is None else str(c) for c in row] for row in table])
+        for k, v in _extract_matrix_params_from_sheet(df, f"PDF table {ti + 1}", logs).items():
+            params.setdefault(k, v)
+
+    for line in lines:
+        tokens = line.split()
+        # The value is the first token that starts like a number; anything
+        # before it is the parameter name (and possibly a unit).
+        idx = next(
+            (i for i, t in enumerate(tokens) if i > 0 and re.match(r"[<>≤≥.\d]", t)),
+            None,
+        )
+        if idx is None or not _PDF_PLAIN_NUMBER.fullmatch(tokens[idx]):
+            continue  # no value, or a non-detect like "<0.5"
+        name_tokens = tokens[:idx]
+        unit = ""
+        if len(name_tokens) > 1 and _PDF_UNIT_TOKEN.fullmatch(name_tokens[-1]):
+            unit = name_tokens.pop()
+        elif idx + 1 < len(tokens) and _PDF_UNIT_TOKEN.fullmatch(tokens[idx + 1]):
+            unit = tokens[idx + 1]
+            if [t.lower() for t in tokens[idx + 2:idx + 4]] == ["as", "n"]:
+                unit += " as N"
+        name = " ".join(name_tokens).rstrip(":=")
+        param = _keyword_match(name.lower())
+        if not param or param in params:
+            continue
+        if normalize_pfas_name(name) in PFAS_SPECIES_DB or _looks_like_pfas(name):
+            continue
+        # A unit guards against prose such as "Copper Ridge Road 123"
+        if not unit and param != "pH":
+            continue
+        val = parse_numeric_value(tokens[idx].replace(",", ""))
+        if val is None:
+            continue
+        if param in _MATRIX_NATIVE_UNIT_PARAMS:
+            unit = ""
+        _store_param(params, param, val, unit, "PDF text", logs, raw_name=name)
+
+    for k, v in parse_text("\n".join(lines)).matrix_params.items():
+        params.setdefault(k, v)
+
+    return params
 
 
 def _parse_pdf_tables(
@@ -1800,13 +1934,13 @@ def parse_all(
 
     # Parse Excel files
     excel_samples: Dict[str, Any] = {}
-    for i, (excel_bytes, excel_filename) in enumerate(excel_files):
+    for excel_bytes, excel_filename in excel_files:
         excel_result = parse_excel(excel_bytes, excel_filename)
         _rename_colliding_samples(excel_result, excel_samples, excel_filename)
+        if excel_result.has_pfas_data and not excel_samples:
+            combined.detected_unit = excel_result.detected_unit
         excel_samples.update(excel_result.pfas_samples)
         combined.merge(excel_result)
-        if i == 0:
-            combined.detected_unit = excel_result.detected_unit
 
     # Parse PDF files
     pdf_samples: Dict[str, Any] = {}

@@ -191,7 +191,18 @@ def _score_sheet_pfas_relevance(df: "pd.DataFrame") -> int:
         "perfluoro", "fluorotelomer", "determinand", "ng/l", "µg/l", "ug/l",
         "mg/l", "total fluorine", "organic fluorine", "tof", "aof", "ftsa",
     ]
-    return min(sum(10 for m in pfas_markers if m in text), 100)
+    score = sum(10 for m in pfas_markers if m in text)
+    # Water-chemistry sheets often arrive as separate files with no PFAS
+    # markers; they still carry the matrix parameters the engine needs.
+    score += 5 * len(set(_WATER_QUALITY_MARKERS.findall(text)))
+    return min(score, 100)
+
+
+_WATER_QUALITY_MARKERS = re.compile(
+    r"\b(?:cod|bod5?|toc|doc|tkn|ph|nitrate|nitrite|no3|no2|ammonia|ammonium|chloride|"
+    r"sulfate|sulphate|hardness|alkalinity|conductivity|turbidity|tss|tds|ppm|"
+    r"dco|dbo|csb|leitfähigkeit|conductivité)\b"
+)
 
 
 def _try_reformat_coa_sheet(df: "pd.DataFrame") -> Optional[str]:
@@ -677,9 +688,14 @@ def parse_with_llm(
 
     if len(excel_files) + len(pdf_files) > 1:
         document_text = (
-            "NOTE: multiple files are provided. If the same sample name appears in "
-            "different files with different data, append the file name in parentheses "
-            "to keep them as separate samples.\n" + document_text
+            "NOTE: multiple files are provided. Customers often split one site's data "
+            "across files by type — e.g. PFAS results in one file and general water "
+            "chemistry (COD, TOC, nitrate, pH, metals ...) in another. Combine them: PFAS "
+            "results go into samples, water chemistry from ANY file goes into water_matrix. "
+            "Do not create a sample entry for a file that has no PFAS measurements. "
+            "If the same sample name appears in different files with different PFAS data, "
+            "append the file name in parentheses to keep them as separate samples.\n"
+            + document_text
         )
 
     truncation_notes: List[str] = []
