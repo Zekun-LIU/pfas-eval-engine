@@ -1743,32 +1743,79 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
 # UNIFIED PARSE ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def pdf_to_plain_text(file_bytes: bytes, filename: str, max_pages: int = 50) -> str:
+    """
+    Extract plain text from a text-based PDF (e.g. an exported email thread).
+    Returns "" for scanned / image-only PDFs or unreadable files.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        return ""
+    try:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            pages = [
+                page.extract_text(x_tolerance=3, y_tolerance=3) or ""
+                for page in pdf.pages[:max_pages]
+            ]
+    except Exception:
+        return ""
+    return "\n\n".join(p for p in pages if p.strip())
+
+
+def _rename_colliding_samples(
+    result: ParsedData, existing: Dict[str, Any], filename: str
+) -> None:
+    """
+    Within one file type, two uploads can legitimately reuse a sample name
+    (e.g. "Influent" in two separate reports). Suffix the later file's
+    sample with its filename so the two are never silently merged.
+    """
+    for old in [s for s in result.pfas_samples if s in existing]:
+        new = f"{old} ({filename})"
+        result.pfas_samples[new] = result.pfas_samples.pop(old)
+        for per_sample in (result.nd_species, result.aof_tof_data, result.sample_metadata):
+            if old in per_sample:
+                per_sample[new] = per_sample.pop(old)
+        result.warnings.append(
+            f"[Parser] Sample '{old}' appears in more than one upload — "
+            f"renamed to '{new}' to keep them separate."
+        )
+
+
 def parse_all(
-    excel_bytes: Optional[bytes],
-    excel_filename: Optional[str],
-    pdf_bytes: Optional[bytes],
-    pdf_filename: Optional[str],
+    excel_files: List[Tuple[bytes, str]],
+    pdf_files: List[Tuple[bytes, str]],
     email_text: str,
     goals_text: str,
 ) -> ParsedData:
     """
     Parse all available input sources and return a merged ParsedData.
 
+    excel_files / pdf_files are lists of (file_bytes, filename).
     Priority for conflicting concentration values: Excel > PDF > Text.
     """
     combined = ParsedData()
     combined.logs.append("=== Parser started ===")
 
-    # Parse Excel
-    if excel_bytes and excel_filename:
+    # Parse Excel files
+    excel_samples: Dict[str, Any] = {}
+    for i, (excel_bytes, excel_filename) in enumerate(excel_files):
         excel_result = parse_excel(excel_bytes, excel_filename)
+        _rename_colliding_samples(excel_result, excel_samples, excel_filename)
+        excel_samples.update(excel_result.pfas_samples)
         combined.merge(excel_result)
-        combined.detected_unit = excel_result.detected_unit
+        if i == 0:
+            combined.detected_unit = excel_result.detected_unit
 
-    # Parse PDF
-    if pdf_bytes and pdf_filename:
+    # Parse PDF files
+    pdf_samples: Dict[str, Any] = {}
+    for pdf_bytes, pdf_filename in pdf_files:
         pdf_result = parse_pdf(pdf_bytes, pdf_filename)
-        # Don't overwrite Excel samples — add as separate samples
+        _rename_colliding_samples(pdf_result, pdf_samples, pdf_filename)
+        pdf_samples.update(pdf_result.pfas_samples)
+        # A PDF sample with the same name as an Excel sample is the same report
+        # in two formats — keep the Excel values, don't duplicate.
         for sample, data in pdf_result.pfas_samples.items():
             if sample not in combined.pfas_samples:
                 combined.pfas_samples[sample] = data

@@ -401,6 +401,7 @@ def _call_claude_parser(
     document_text: str,
     goals_text: str,
     api_key: str,
+    notes_text: str = "",
 ) -> Tuple[str, dict]:
     """
     Send document text to Claude Sonnet for structured PFAS data extraction.
@@ -418,6 +419,13 @@ def _call_claude_parser(
     user_prompt = f"DOCUMENT CONTENT:\n{document_text}"
     if goals_text.strip():
         user_prompt += f"\n\nUSER-PROVIDED TREATMENT GOALS / CUSTOMER CONTEXT:\n{goals_text}"
+    if notes_text.strip():
+        user_prompt += (
+            "\n\nCUSTOMER EMAIL CORRESPONDENCE / NOTES "
+            "(use for project context, treatment goals, flow rate and matrix parameters; "
+            "only take PFAS concentrations from here if DOCUMENT CONTENT has no lab data):\n"
+            f"{notes_text}"
+        )
 
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
@@ -630,19 +638,24 @@ def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
 # MAIN ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_MAX_DOCUMENT_CHARS = 120_000   # all lab-data files combined
+_MAX_NOTES_CHARS = 30_000       # customer email / notes context
+
+
 def parse_with_llm(
-    excel_bytes: Optional[bytes],
-    excel_filename: Optional[str],
-    pdf_bytes: Optional[bytes],
-    pdf_filename: Optional[str],
+    excel_files: List[Tuple[bytes, str]],
+    pdf_files: List[Tuple[bytes, str]],
     goals_text: str,
     api_key: str,
+    notes_text: str = "",
 ) -> ParsedData:
     """
     Main LLM parsing entry point.
 
+    excel_files / pdf_files are lists of (file_bytes, filename).
+
     1. Converts uploaded files to human-readable text
-    2. Sends to Claude Haiku for structured extraction
+    2. Sends to Claude Sonnet for structured extraction
     3. Maps JSON output to ParsedData
 
     On any failure falls back to the rule-based parse_all() so the app
@@ -651,26 +664,56 @@ def parse_with_llm(
     # Import here to avoid circular imports at module load time
     from parser import parse_all  # noqa: F811
 
-    has_excel = bool(excel_bytes and excel_filename)
-    has_pdf = bool(pdf_bytes and pdf_filename)
+    has_excel = bool(excel_files)
+    has_pdf = bool(pdf_files)
 
     document_text = ""
-    if has_excel:
+    for excel_bytes, excel_filename in excel_files:
         document_text += f"\n[EXCEL FILE: {excel_filename}]\n"
         document_text += _excel_to_text(excel_bytes, excel_filename)
-    if has_pdf:
+    for pdf_bytes, pdf_filename in pdf_files:
         document_text += f"\n[PDF FILE: {pdf_filename}]\n"
         document_text += _pdf_to_text(pdf_bytes, pdf_filename)
 
-    if not document_text.strip() and not goals_text.strip():
+    if len(excel_files) + len(pdf_files) > 1:
+        document_text = (
+            "NOTE: multiple files are provided. If the same sample name appears in "
+            "different files with different data, append the file name in parentheses "
+            "to keep them as separate samples.\n" + document_text
+        )
+
+    truncation_notes: List[str] = []
+    if len(document_text) > _MAX_DOCUMENT_CHARS:
+        document_text = document_text[:_MAX_DOCUMENT_CHARS] + "\n... [TRUNCATED — combined uploads exceed limit]"
+        truncation_notes.append(
+            f"[LLM] Combined lab-data uploads exceeded {_MAX_DOCUMENT_CHARS:,} characters — "
+            "the end was truncated. Upload fewer files per run if data looks incomplete."
+        )
+    if len(notes_text) > _MAX_NOTES_CHARS:
+        notes_text = notes_text[:_MAX_NOTES_CHARS] + "\n... [TRUNCATED]"
+        truncation_notes.append(
+            f"[LLM] Customer email / notes exceeded {_MAX_NOTES_CHARS:,} characters — truncated."
+        )
+    goals_for_prompt = goals_text
+    if len(goals_for_prompt) > _MAX_NOTES_CHARS:
+        goals_for_prompt = goals_for_prompt[:_MAX_NOTES_CHARS] + "\n... [TRUNCATED]"
+        truncation_notes.append(
+            f"[LLM] Treatment goals / context exceeded {_MAX_NOTES_CHARS:,} characters — "
+            "truncated for reading (full text still used by engine keyword rules)."
+        )
+
+    if not document_text.strip() and not goals_text.strip() and not notes_text.strip():
         return ParsedData()
 
     try:
-        raw_response, parsed_json = _call_claude_parser(document_text, goals_text, api_key)
+        raw_response, parsed_json = _call_claude_parser(
+            document_text, goals_for_prompt, api_key, notes_text=notes_text
+        )
         result = parse_from_llm_json(parsed_json, goals_text)
+        result.warnings += truncation_notes
         result.has_excel = has_excel
         result.has_pdf = has_pdf
-        result.has_text = bool(goals_text.strip())
+        result.has_text = bool(goals_text.strip() or notes_text.strip())
         result.llm_raw_response = raw_response
         result.logs.insert(0, "[LLM] ✨ Enhanced Data-Reading active — Claude Sonnet pre-parser")
         return result
@@ -678,10 +721,8 @@ def parse_with_llm(
     except Exception as exc:
         # Graceful fallback: rule-based parser as safety net
         fallback = parse_all(
-            excel_bytes=excel_bytes,
-            excel_filename=excel_filename,
-            pdf_bytes=pdf_bytes,
-            pdf_filename=pdf_filename,
+            excel_files=excel_files,
+            pdf_files=pdf_files,
             email_text="",
             goals_text=goals_text,
         )

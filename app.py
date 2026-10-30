@@ -37,7 +37,7 @@ from engine import (
     M3_TKN_HIGH, M3_METAL_FLAG_PPM,
     TOF_COVERAGE_THRESHOLD,
 )
-from parser import ParsedData, parse_all
+from parser import ParsedData, parse_all, pdf_to_plain_text
 from utils import (
     CATEGORY_LABELS,
     format_conc_auto,
@@ -340,6 +340,10 @@ st.markdown(
     .input-label {
         font-size: 0.72rem; font-weight: 600; letter-spacing: 0.6px;
         text-transform: uppercase; color: #6E6E73; margin-bottom: 8px;
+    }
+    .input-sublabel {
+        font-size: 0.74rem; font-weight: 500; color: #6E6E73;
+        margin: 2px 0 -6px 0;
     }
 
     /* ── Placeholder text — light, clearly example-only ───────── */
@@ -1498,22 +1502,27 @@ inp_a, inp_b, inp_c, inp_d = st.columns([1, 1, 1.5, 1.5], gap="medium")
 
 with inp_a:
     st.markdown('<div class="input-label">Excel PFAS Data</div>', unsafe_allow_html=True)
-    excel_file = st.file_uploader(
+    excel_files = st.file_uploader(
         "Excel",
         type=["xlsx", "xls", "csv"],
+        accept_multiple_files=True,
         help=(
             "Column A = PFAS analyte names, Columns B+ = sample concentrations. "
-            "Unit detected automatically."
+            "Unit detected automatically. Multiple files allowed."
         ),
         label_visibility="collapsed",
     )
 
 with inp_b:
     st.markdown('<div class="input-label">PDF Lab Report</div>', unsafe_allow_html=True)
-    pdf_file = st.file_uploader(
+    pdf_files = st.file_uploader(
         "PDF",
         type=["pdf"],
-        help="PDF lab report with quantified PFAS results. Table and text-based PDFs supported.",
+        accept_multiple_files=True,
+        help=(
+            "PDF lab reports with quantified PFAS results. Table and text-based PDFs supported. "
+            "Multiple files allowed."
+        ),
         label_visibility="collapsed",
     )
 
@@ -1527,6 +1536,18 @@ with inp_c:
             "DOC = 4.5 mg/L, sulfate = 180 mg/L, pH = 7.4"
         ),
         help="Scanned for PFAS species, inline concentrations, and matrix parameters.",
+        label_visibility="collapsed",
+    )
+    st.markdown('<div class="input-sublabel">Attach email PDFs</div>', unsafe_allow_html=True)
+    notes_pdfs = st.file_uploader(
+        "Email PDFs",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="notes_pdfs",
+        help=(
+            "Customer email threads exported to PDF. Their text is read together with the "
+            "notes above. Text-based PDFs only — scanned images cannot be read."
+        ),
         label_visibility="collapsed",
     )
 
@@ -1545,6 +1566,23 @@ with inp_d:
         ),
         label_visibility="collapsed",
     )
+    st.markdown('<div class="input-sublabel">Attach context PDFs</div>', unsafe_allow_html=True)
+    goals_pdfs = st.file_uploader(
+        "Context PDFs",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="goals_pdfs",
+        help=(
+            "Specs, RFQs or email threads describing treatment goals, flow rate or site context. "
+            "Text-based PDFs only — scanned images cannot be read."
+        ),
+        label_visibility="collapsed",
+    )
+
+_any_input = bool(
+    excel_files or pdf_files or notes_pdfs or goals_pdfs
+    or email_text.strip() or goals_text.strip()
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTROLS ROW — parsing mode + source pills + run button
@@ -1580,13 +1618,17 @@ with ctrl_a:
 
 with ctrl_b:
     st.markdown('<div class="section-header">Active Sources</div>', unsafe_allow_html=True)
-    xl_cls  = "src-on" if excel_file else "src-off"
-    pdf_cls = "src-on" if pdf_file else "src-off"
-    txt_cls = "src-on" if (email_text.strip() or goals_text.strip()) else "src-off"
+    xl_cls  = "src-on" if excel_files else "src-off"
+    pdf_cls = "src-on" if pdf_files else "src-off"
+    txt_cls = "src-on" if (
+        email_text.strip() or goals_text.strip() or notes_pdfs or goals_pdfs
+    ) else "src-off"
+    xl_lbl  = f"Excel ×{len(excel_files)}" if len(excel_files) > 1 else "Excel"
+    pdf_lbl = f"PDF ×{len(pdf_files)}" if len(pdf_files) > 1 else "PDF"
     st.markdown(
         f'<div style="padding-top:4px;">'
-        f'<span class="src-pill {xl_cls}">Excel</span>'
-        f'<span class="src-pill {pdf_cls}">PDF</span>'
+        f'<span class="src-pill {xl_cls}">{xl_lbl}</span>'
+        f'<span class="src-pill {pdf_cls}">{pdf_lbl}</span>'
         f'<span class="src-pill {txt_cls}">Text</span>'
         f'</div>',
         unsafe_allow_html=True,
@@ -1596,7 +1638,7 @@ with ctrl_c:
     st.markdown('<div class="section-header">&nbsp;</div>', unsafe_allow_html=True)
     run_clicked = st.button("Run Evaluation", type="primary")
 
-if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
+if not _any_input:
     st.info(
         "Upload an Excel file or PDF, or paste text to begin. At least one source is required.",
         icon="ℹ️",
@@ -1623,7 +1665,7 @@ tab_tech, tab_email, tab_plan, tab_debug = st.tabs([
 
 # ─── Handle Run button ───────────────────────────────────────────────────────
 if run_clicked:
-    if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
+    if not _any_input:
         with tab_tech:
             st.warning("Please provide at least one input source before running.")
     else:
@@ -1631,41 +1673,65 @@ if run_clicked:
         import time as _time
 
         # Read file bytes in main thread (UploadedFile is not thread-safe)
-        _excel_bytes = excel_file.read() if excel_file else None
-        _pdf_bytes   = pdf_file.read()   if pdf_file   else None
-        _excel_name  = excel_file.name   if excel_file else None
-        _pdf_name    = pdf_file.name     if pdf_file   else None
+        _excel_list = [(f.getvalue(), f.name) for f in excel_files]
+        _pdf_list   = [(f.getvalue(), f.name) for f in pdf_files]
+        _notes_att  = [(f.getvalue(), f.name) for f in notes_pdfs]
+        _goals_att  = [(f.getvalue(), f.name) for f in goals_pdfs]
 
         # Shared state between main and background threads
         _shared: dict = {"parsed": None, "eval_result": None, "error": None, "done": False}
 
+        def _with_attachments(
+            typed: str, attachments: list, kind: str, warnings: list
+        ) -> str:
+            """Append text extracted from attached PDFs to the typed text box content."""
+            parts = [typed.strip()] if typed.strip() else []
+            for _bytes, _name in attachments:
+                _txt = pdf_to_plain_text(_bytes, _name)
+                if _txt.strip():
+                    parts.append(f"[Attached {kind} PDF: {_name}]\n{_txt}")
+                else:
+                    warnings.append(
+                        f"[Attachment] No readable text in '{_name}' — it may be a scanned "
+                        "image. Copy the key text into the box instead."
+                    )
+            return "\n\n".join(parts)
+
         def _background_work() -> None:
             """Run parse + evaluate in background so main thread can animate progress."""
             try:
+                _att_warnings: list = []
+                _notes_full = _with_attachments(email_text, _notes_att, "email", _att_warnings)
+                _goals_full = _with_attachments(goals_text, _goals_att, "context", _att_warnings)
+
                 if use_llm and _api_key:
                     from llm_parser import parse_with_llm
                     _p = parse_with_llm(
-                        excel_bytes=_excel_bytes,
-                        excel_filename=_excel_name,
-                        pdf_bytes=_pdf_bytes,
-                        pdf_filename=_pdf_name,
-                        goals_text=goals_text,
+                        excel_files=_excel_list,
+                        pdf_files=_pdf_list,
+                        goals_text=_goals_full,
                         api_key=_api_key,
+                        notes_text=_notes_full,
                     )
-                    if email_text.strip():
+                    if _notes_full:
                         from parser import parse_text
-                        _t = parse_text(email_text, "")
+                        _t = parse_text(_notes_full, "")
+                        # The LLM already read the notes; keep the regex pass for
+                        # matrix params / keywords but don't duplicate PFAS samples.
+                        if _p.has_pfas_data:
+                            _t.pfas_samples = {}
                         _p.merge(_t)
-                        _p.customer_notes_text = email_text.strip()
+                        _p.customer_notes_text = _notes_full
                 else:
                     _p = parse_all(
-                        excel_bytes=_excel_bytes,
-                        excel_filename=_excel_name,
-                        pdf_bytes=_pdf_bytes,
-                        pdf_filename=_pdf_name,
-                        email_text=email_text,
-                        goals_text=goals_text,
+                        excel_files=_excel_list,
+                        pdf_files=_pdf_list,
+                        email_text=_notes_full,
+                        goals_text=_goals_full,
                     )
+                _p.warnings += _att_warnings
+                for _, _name in _notes_att + _goals_att:
+                    _p.logs.append(f"[Attachment] Read '{_name}'")
                 _shared["parsed"]      = _p
                 _shared["eval_result"] = evaluate(_p)
             except Exception as _exc:
