@@ -212,6 +212,9 @@ st.markdown(
         background-color: #FFFFFF;
         color: #1D1D1F;
         line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
     }
 
     /* ── Page chrome ──────────────────────────────────────────── */
@@ -265,6 +268,30 @@ st.markdown(
     .flag-row strong      { color: #1D1D1F !important; }
     .flag-detail          { font-size: 0.80rem; color: #6E6E73 !important; margin-top: 6px; font-style: italic; line-height: 1.55; }
 
+    /* Severity dot + tag + rule-id chip (replaces emoji icons) */
+    .flag-dot {
+        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        margin-right: 9px; vertical-align: 1px;
+    }
+    .flag-critical         .flag-dot { background: #FF3B30; }
+    .flag-warning          .flag-dot { background: #FF9500; }
+    .flag-info             .flag-dot { background: #007AFF; }
+    .flag-ok               .flag-dot { background: #34C759; }
+    .flag-commercial       .flag-dot { background: #AF52DE; }
+    .flag-technical        .flag-dot { background: #FF6B00; }
+    .flag-pathway          .flag-dot { background: #30D158; }
+    .flag-special_handling .flag-dot { background: #8E8E93; }
+    .flag-tag {
+        font-weight: 700; font-size: 0.72rem; letter-spacing: 0.9px;
+        margin-right: 8px; color: #1D1D1F;
+    }
+    .flag-rule {
+        font-size: 0.70rem; font-weight: 500; color: #6E6E73;
+        letter-spacing: 0.4px; margin-right: 10px;
+        padding: 1px 7px; background: rgba(0,0,0,0.05); border-radius: 5px;
+        font-variant-numeric: tabular-nums;
+    }
+
     /* ── Variability banner ───────────────────────────────────── */
     .variability-banner {
         background: #FFF8EC; border: 1px solid #FFCC00; border-radius: 10px;
@@ -285,6 +312,7 @@ st.markdown(
     .metric-card .val {
         font-size: 1.45rem; font-weight: 700; color: #1D1D1F;
         letter-spacing: -0.5px;
+        font-variant-numeric: tabular-nums;
     }
     .metric-card .lbl {
         font-size: 0.68rem; color: #6E6E73; margin-top: 5px;
@@ -330,7 +358,8 @@ st.markdown(
         transition: background 0.15s ease;
         cursor: pointer;
     }
-    div[data-testid="stButton"] > button:hover { background: #0066DD; }
+    div[data-testid="stButton"] > button:hover  { background: #0066DD; }
+    div[data-testid="stButton"] > button:active { background: #0052CC; }
 
     /* ── Download buttons — ghost style ──────────────────────── */
     [data-testid="stDownloadButton"] > button {
@@ -401,7 +430,8 @@ st.markdown(
         color: #8E8E93; padding: 64px 0 48px 0;
         text-align: center; font-size: 0.92rem; line-height: 1.6;
     }
-    .empty-state-icon { font-size: 2.2rem; margin-bottom: 14px; opacity: 0.45; display: block; }
+    .empty-state-icon { display: flex; justify-content: center; margin-bottom: 14px; color: #8E8E93; opacity: 0.6; }
+    .empty-state-icon svg { width: 34px; height: 34px; }
 
     /* ── Hide native Streamlit running indicator ──────────────── */
     [data-testid="stStatusWidget"] { display: none !important; }
@@ -420,6 +450,7 @@ st.markdown(
         position: absolute; top: 50%; left: 50%;
         transform: translate(-50%, -50%);
         font-size: 1.45rem; font-weight: 700; color: #1D1D1F; letter-spacing: -1px;
+        font-variant-numeric: tabular-nums;
     }
     .progress-ring-label {
         font-size: 0.88rem; font-weight: 400; color: #6E6E73;
@@ -429,6 +460,25 @@ st.markdown(
     .email-generating {
         color: #6E6E73; font-size: 0.9rem; font-weight: 500;
         padding: 20px 0; text-align: center; letter-spacing: 0.1px;
+    }
+
+    /* ── Tab panel breathing room ─────────────────────────────── */
+    div[data-baseweb="tab-panel"] { padding-top: 16px !important; }
+
+    /* ── Keyboard focus visibility ────────────────────────────── */
+    button:focus-visible,
+    [data-baseweb="tab"]:focus-visible,
+    textarea:focus-visible {
+        outline: 2px solid #007AFF !important;
+        outline-offset: 2px !important;
+    }
+
+    /* ── Respect reduced-motion preference ────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+            animation: none !important;
+            transition: none !important;
+        }
     }
 
     </style>
@@ -444,16 +494,6 @@ st.markdown(
 def _render_flag(flag) -> None:
     """Render a single FlagItem as a styled HTML block — supports all spec severity types."""
     css_class = f"flag-{flag.severity}"
-    icon = {
-        "critical":        "🔴",
-        "commercial":      "🟣",
-        "technical":       "🟠",
-        "pathway":         "🔵",
-        "special_handling":"⚪",
-        "warning":         "🟡",
-        "info":            "🔵",
-        "ok":              "🟢",
-    }.get(flag.severity, "⚪")
     label = {
         "critical":        "CRITICAL",
         "commercial":      "COMMERCIAL",
@@ -467,7 +507,10 @@ def _render_flag(flag) -> None:
     detail_html = f'<div class="flag-detail">{flag.detail}</div>' if flag.detail else ""
     st.markdown(
         f'<div class="flag-row {css_class}">'
-        f'<strong>{icon} [{label} — {flag.rule_id}]</strong> {flag.message}'
+        f'<span class="flag-dot"></span>'
+        f'<span class="flag-tag">{label}</span>'
+        f'<span class="flag-rule">{flag.rule_id}</span>'
+        f'{flag.message}'
         f'{detail_html}</div>',
         unsafe_allow_html=True,
     )
@@ -531,11 +574,14 @@ def _render_tof_analysis(tof: "TOFAnalysisResult") -> None:
     )
 
     ratio_pct = tof.coverage_ratio * 100
-    status_icon = "⚠️" if tof.unknown_pfas_flag else "✅"
-    status_text = (
-        f"**{status_icon} Theoretical TOF covers {ratio_pct:.1f}% of reported {tof.measured_type}**"
+    status_dot = "#FF9500" if tof.unknown_pfas_flag else "#34C759"
+    st.markdown(
+        f'<div style="font-weight:600; font-size:0.92rem; margin:2px 0 10px 0;">'
+        f'<span style="display:inline-block; width:9px; height:9px; border-radius:50%;'
+        f' background:{status_dot}; margin-right:9px; vertical-align:1px;"></span>'
+        f'Theoretical TOF covers {ratio_pct:.1f}% of reported {tof.measured_type}</div>',
+        unsafe_allow_html=True,
     )
-    st.markdown(status_text)
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -553,7 +599,7 @@ def _render_tof_analysis(tof: "TOFAnalysisResult") -> None:
             unsafe_allow_html=True,
         )
     with c3:
-        pct_color = "#EF4444" if tof.unknown_pfas_flag else "#22C55E"
+        pct_color = "#FF3B30" if tof.unknown_pfas_flag else "#34C759"
         st.markdown(
             f'<div class="metric-card">'
             f'<div class="val" style="color:{pct_color}">{ratio_pct:.1f}%</div>'
@@ -709,7 +755,7 @@ def _render_sample_section(
             tof = sr.tof_result
             cov_pct = tof.coverage_ratio * 100
             if tof.unknown_pfas_flag:
-                _tof_bg = "#FFF1F2"; _tof_border = "#FF3B30"; _tof_icon = "⚠️"
+                _tof_bg = "#FFF1F2"; _tof_border = "#FF3B30"; _tof_dot = "#FF3B30"
                 _tof_note = (
                     f"Only <strong>{cov_pct:.1f}%</strong> of reported "
                     f"{tof.measured_type} is accounted for by identified species. "
@@ -717,7 +763,7 @@ def _render_sample_section(
                     "treatment efficacy for unidentified species cannot be guaranteed."
                 )
             else:
-                _tof_bg = "#F0FFF5"; _tof_border = "#34C759"; _tof_icon = "✅"
+                _tof_bg = "#F0FFF5"; _tof_border = "#34C759"; _tof_dot = "#34C759"
                 _tof_note = (
                     f"Identified species account for <strong>{cov_pct:.1f}%</strong> of "
                     f"reported {tof.measured_type} — good coverage, low unknown-PFAS risk."
@@ -725,7 +771,9 @@ def _render_sample_section(
             st.markdown(
                 f'<div style="background:{_tof_bg}; border-left:4px solid {_tof_border}; '
                 f'border-radius:10px; padding:12px 16px; margin:0; font-size:0.86rem; line-height:1.6;">'
-                f'{_tof_icon} <strong>TOF/AOF Coverage:</strong> '
+                f'<span style="display:inline-block; width:8px; height:8px; border-radius:50%; '
+                f'background:{_tof_dot}; margin-right:9px; vertical-align:1px;"></span>'
+                f'<strong>TOF/AOF Coverage:</strong> '
                 f'Theoretical TOF {format_conc_auto(tof.theoretical_tof_mg_L)} as F &nbsp;|&nbsp; '
                 f'Reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)} as F &nbsp;|&nbsp; '
                 f'Coverage {cov_pct:.1f}%<br>'
@@ -742,7 +790,7 @@ def _render_sample_section(
         if getattr(sr, "avg_module1", None) is not None:
             avg_m1 = sr.avg_module1
             with st.expander(
-                f"📊  Average / Steady-State PFAS Profile  |  "
+                f"Average / Steady-State PFAS Profile  |  "
                 f"Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}",
                 expanded=False,
             ):
@@ -917,7 +965,6 @@ def _render_module3(m3: Module3Result) -> None:
         st.error(
             "**Required matrix parameters missing:** " +
             " | ".join(m3.missing_required_params),
-            icon="🚨",
         )
 
     for f in m3.flags:
@@ -1057,15 +1104,17 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         if vf.severity == "info":
             # Stat-range note (Average + Maximum from same stream)
             _vbg  = "#F0F5FF"; _vaccent = "#007AFF"; _vcolor = "#1E40AF"
-            _vicon = "🔵"; _vkey = vf.rule_id
+            _vkey = vf.rule_id
         else:
             # True high-variability warning
             _vbg  = "#FFFBEB"; _vaccent = "#FF9500"; _vcolor = "#5C3D00"
-            _vicon = "🟡"; _vkey = "M1-VAR"
+            _vkey = "M1-VAR"
         st.markdown(
             f'<div style="background:{_vbg}; border-left:4px solid {_vaccent}; border-radius:10px; '
             f'padding:12px 16px; font-size:0.86rem; line-height:1.6; color:{_vcolor}; margin:0;">'
-            f'{_vicon} <strong>[{_vkey}]</strong> '
+            f'<span style="display:inline-block; width:8px; height:8px; border-radius:50%; '
+            f'background:{_vaccent}; margin-right:9px; vertical-align:1px;"></span>'
+            f'<strong>[{_vkey}]</strong> '
             f'{vf.message}<br>'
             f'<span style="font-size:0.80rem; opacity:0.75;">{vf.detail}</span>'
             f'</div>',
@@ -1093,25 +1142,25 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         if ctx.get("flow_rate_display"):
             gpm = ctx.get("throughput_gpm")
             gpm_str = f" → **{gpm:.0f} GPM**" if gpm else ""
-            flag_str = " 🔴 >100 GPM — large-scale flag" if (gpm and gpm > 100) else ""
+            flag_str = " — **>100 GPM, large-scale flag**" if (gpm and gpm > 100) else ""
             ctx_items.append(f"**Throughput:** {ctx['flow_rate_display']}{gpm_str}{flag_str}")
         elif ctx.get("throughput_gpm"):
             gpm = ctx["throughput_gpm"]
-            flag_str = " 🔴 >100 GPM — large-scale flag" if gpm > 100 else ""
+            flag_str = " — **>100 GPM, large-scale flag**" if gpm > 100 else ""
             ctx_items.append(f"**Throughput:** {gpm:.0f} GPM{flag_str}")
         if ctx_items:
             st.markdown('<div class="section-header">Project Context</div>', unsafe_allow_html=True)
             st.markdown("  &nbsp;&nbsp;".join(ctx_items))
             if ctx.get("throughput_gpm") and float(ctx["throughput_gpm"]) > 100:
                 st.warning(
-                    f"⚠️ **Large-scale application** — {ctx['throughput_gpm']:.0f} GPM exceeds the "
+                    f"**Large-scale application** — {ctx['throughput_gpm']:.0f} GPM exceeds the "
                     "100 GPM threshold. Full commercial & engineering review required before quoting.",
                     icon=None,
                 )
 
     # ── Missing Information ───────────────────────────────────────────────────
     if result.missing_info:
-        with st.expander("⚠️  Missing / Required Information", expanded=True):
+        with st.expander("Missing / Required Information", expanded=True):
             st.markdown("The following information was not found in uploaded materials:")
             for item in result.missing_info:
                 st.markdown(f"- {item}")
@@ -1142,7 +1191,7 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
     st.markdown("---")
     report_text = _build_text_report(result)
     st.download_button(
-        "⬇  Download Full Technical Report (.txt)",
+        "Download Full Technical Report (.txt)",
         data=report_text,
         file_name="PFAS_Evaluation_Report.txt",
         mime="text/plain",
@@ -1165,13 +1214,13 @@ def _render_email_draft(result: EvaluationResult, email_text_override: str | Non
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
-            "⬇  Download Email Draft (.txt)",
+            "Download Email Draft (.txt)",
             data=email_text,
             file_name="PFAS_Email_Draft.txt",
             mime="text/plain",
         )
     with col2:
-        with st.expander("📋  Select text to copy"):
+        with st.expander("Select text to copy"):
             st.text_area(
                 "Email text:",
                 value=email_text,
@@ -1193,12 +1242,12 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
     if parsed:
         # ── LLM-specific debug info ───────────────────────────────────────────
         if parsed.llm_parse_notes:
-            st.markdown("**🤖 LLM Parse Notes:**")
+            st.markdown("**LLM Parse Notes:**")
             for note in parsed.llm_parse_notes:
                 st.info(note)
 
         if parsed.sample_metadata:
-            st.markdown("**🤖 LLM Sample Metadata:**")
+            st.markdown("**LLM Sample Metadata:**")
             meta_rows = [
                 {
                     "Sample": name,
@@ -1210,12 +1259,12 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
             st.dataframe(pd.DataFrame(meta_rows), hide_index=True, use_container_width=True)
 
         if parsed.llm_project_context:
-            st.markdown("**🤖 LLM Project Context:**")
+            st.markdown("**LLM Project Context:**")
             ctx_rows = [{"Field": k, "Value": str(v)} for k, v in parsed.llm_project_context.items()]
             st.dataframe(pd.DataFrame(ctx_rows), hide_index=True, use_container_width=True)
 
         if parsed.llm_raw_response:
-            with st.expander("🤖 LLM Raw Response (JSON)", expanded=False):
+            with st.expander("LLM Raw Response (JSON)", expanded=False):
                 st.code(parsed.llm_raw_response, language="json")
 
         # ── Standard debug info ───────────────────────────────────────────────
@@ -1331,7 +1380,7 @@ def _render_editable_plan(plan: "TestPlan", idx: int) -> None:
 
     # ── Download (reads current edited widget values) ────────────────────────
     st.download_button(
-        "⬇  Download This Plan (.txt)",
+        "Download This Plan (.txt)",
         data=_plan_export_from_state(plan, idx),
         file_name=f"BenchTestPlan_{plan.sample_name}.txt".replace(" ", "_"),
         mime="text/plain",
@@ -1509,7 +1558,7 @@ with ctrl_a:
     st.markdown('<div class="section-header">Parsing Mode</div>', unsafe_allow_html=True)
     if _api_key:
         use_llm = st.toggle(
-            "✨ Enhanced Document Reading",
+            "Enhanced Document Reading",
             value=True,
             help=(
                 "Use the enhanced document reading mode to extract all data from uploaded files. "
@@ -1518,10 +1567,16 @@ with ctrl_a:
                 "Falls back to standard parsing automatically if unavailable."
             ),
         )
-        st.caption("🟢 Enhanced reading available")
+        st.markdown(
+            '<span class="src-pill src-on">Enhanced reading available</span>',
+            unsafe_allow_html=True,
+        )
     else:
         use_llm = False
-        st.caption("⚪ Enhanced reading unavailable — API key not configured.")
+        st.markdown(
+            '<span class="src-pill src-off">Enhanced reading unavailable — API key not configured</span>',
+            unsafe_allow_html=True,
+        )
 
 with ctrl_b:
     st.markdown('<div class="section-header">Active Sources</div>', unsafe_allow_html=True)
@@ -1539,7 +1594,7 @@ with ctrl_b:
 
 with ctrl_c:
     st.markdown('<div class="section-header">&nbsp;</div>', unsafe_allow_html=True)
-    run_clicked = st.button("▶  Run Evaluation", type="primary")
+    run_clicked = st.button("Run Evaluation", type="primary")
 
 if not (excel_file or pdf_file or email_text.strip() or goals_text.strip()):
     st.info(
@@ -1560,10 +1615,10 @@ loading_placeholder = st.empty()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 tab_tech, tab_email, tab_plan, tab_debug = st.tabs([
-    "📋  Technical Output",
-    "✉  Business Email Draft",
-    "🧪  Bench Test Plan",
-    "🔍  Debug / Logs",
+    "Technical Output",
+    "Business Email Draft",
+    "Bench Test Plan",
+    "Debug / Logs",
 ])
 
 # ─── Handle Run button ───────────────────────────────────────────────────────
@@ -1663,7 +1718,11 @@ with tab_tech:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">⚗</span>'
+            '<span class="empty-state-icon">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/>'
+            '<path d="M8.5 2h7"/><path d="M7 16h10"/></svg>'
+            '</span>'
             'Technical evaluation output will appear here after running the engine.'
             '</div>',
             unsafe_allow_html=True,
@@ -1676,7 +1735,11 @@ with tab_email:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">✉</span>'
+            '<span class="empty-state-icon">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+            '<rect width="20" height="16" x="2" y="4" rx="2"/>'
+            '<path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>'
+            '</span>'
             'Business email draft will be generated after running the evaluation.'
             '</div>',
             unsafe_allow_html=True,
@@ -1689,7 +1752,7 @@ with tab_email:
         if llm_email is None and use_llm and _api_key and _parsed_data:
             _email_ph = st.empty()
             _email_ph.markdown(
-                '<div class="email-generating">✉&nbsp; Preparing business email draft…</div>',
+                '<div class="email-generating">Preparing business email draft…</div>',
                 unsafe_allow_html=True,
             )
             try:
@@ -1707,7 +1770,7 @@ with tab_email:
         if llm_email:
             email_version = st.radio(
                 "Email version:",
-                ["✨ Enhanced Draft", "📄 Template-Generated"],
+                ["Enhanced Draft", "Template-Generated"],
                 horizontal=True,
                 label_visibility="collapsed",
             )
@@ -1721,7 +1784,11 @@ with tab_plan:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">🧪</span>'
+            '<span class="empty-state-icon">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M14.5 2v17.5c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5V2"/>'
+            '<path d="M8.5 2h7"/><path d="M14.5 16h-5"/></svg>'
+            '</span>'
             'Run an evaluation first. Generate the bench test plan once the physical '
             'water samples have arrived.'
             '</div>',
@@ -1732,7 +1799,7 @@ with tab_plan:
             "Bench-scale Proof-of-Concept plan per sample. Generate this once the samples "
             "have physically arrived; all recommended values below are editable before export."
         )
-        if st.button("🧪  Generate Bench Test Plan", key="gen_plan_btn"):
+        if st.button("Generate Bench Test Plan", key="gen_plan_btn"):
             st.session_state.test_plans = generate_test_plans(
                 result, st.session_state.parsed_data
             )
@@ -1744,8 +1811,7 @@ with tab_plan:
         else:
             st.info(
                 "Click **Generate Bench Test Plan** to build a per-sample test protocol "
-                "from the evaluation results.",
-                icon="🧪",
+                "from the evaluation results."
             )
 
 # ── Tab 4: Debug / Logs ───────────────────────────────────────────────────────
@@ -1753,7 +1819,10 @@ with tab_debug:
     if result is None:
         st.markdown(
             '<div class="empty-state">'
-            '<span class="empty-state-icon">🔍</span>'
+            '<span class="empty-state-icon">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+            '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>'
+            '</span>'
             'Parser and engine logs will appear here after running.'
             '</div>',
             unsafe_allow_html=True,
