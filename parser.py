@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from file_readers import KIND_DOCUMENT, KIND_PDF, KIND_SPREADSHEET, KIND_UNREADABLE, ReadDocument, load_sheets
 from utils import (
     PFAS_SPECIES_DB,
     PFAS_ALIASES,
@@ -80,6 +81,12 @@ class ParsedData:
     has_excel: bool = False
     has_pdf: bool = False
     has_text: bool = False
+    has_other: bool = False
+
+    # Which files were read and how, as {"file", "format", "read_as", "note"}
+    source_files: List[Dict[str, str]] = field(default_factory=list)
+    # What the user must check by eye: {"level": "critical"|"warning", "message"}
+    data_checks: List[Dict[str, str]] = field(default_factory=list)
 
     # ── LLM pre-parser outputs (populated only when LLM mode is active) ──────
     # Per-sample semantic metadata (statistical summary flags, etc.)
@@ -119,6 +126,10 @@ class ParsedData:
             self.has_pdf = True
         if other.has_text:
             self.has_text = True
+        if other.has_other:
+            self.has_other = True
+        self.source_files += other.source_files
+        self.data_checks += other.data_checks
         self.sample_metadata.update(other.sample_metadata)
         self.llm_parse_notes += other.llm_parse_notes
         if other.llm_project_context:
@@ -189,21 +200,11 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     logs = result.logs
 
     # ── Load all sheets ───────────────────────────────────────────────────────
-    if filename.lower().endswith(".csv"):
-        try:
-            df_raw = pd.read_csv(io.BytesIO(file_bytes), header=None, dtype=str)
-            sheets = {"Sheet1": df_raw}
-        except Exception as e:
-            result.errors.append(f"[Excel] Failed to open CSV: {e}")
-            return result
-    else:
-        try:
-            sheets = pd.read_excel(
-                io.BytesIO(file_bytes), header=None, dtype=str, sheet_name=None
-            )
-        except Exception as e:
-            result.errors.append(f"[Excel] Failed to open file: {e}")
-            return result
+    try:
+        sheets = load_sheets(file_bytes, filename)
+    except Exception as e:
+        result.errors.append(f"[Excel] Failed to open file: {e}")
+        return result
 
     logs.append(f"[Excel] '{filename}', sheets: {list(sheets.keys())}")
 
@@ -457,6 +458,14 @@ def _parse_transposed_excel_sheet(
     return result
 
 
+_NOT_A_SAMPLE = re.compile(
+    r"^\s*(?:rl|mdl|mrl|dl|lod|loq|pql|sdl|reporting\s+limit|detection\s+limit|"
+    r"quantitation\s+limit|limit|cas|cas\s*(?:no|number|#|rn)\.?|method|units?|uom|"
+    r"qual(?:ifier)?|flags?|q|dilution|df|spike|recovery|%\s*rec)\s*$",
+    re.IGNORECASE,
+)
+
+
 def _parse_excel_sheet(
     df_raw: "pd.DataFrame",
     sheet_name: str,
@@ -482,6 +491,14 @@ def _parse_excel_sheet(
         if norm in PFAS_SPECIES_DB or _looks_like_pfas(cell_val):
             data_start_row = ri
             header_row_idx = ri - 1 if ri > 0 else None
+            # Chemistry or unit rows can sit between the sample names and the first
+            # PFAS row; their values must not be taken for sample names.
+            while header_row_idx:
+                above = str(df_raw.iloc[header_row_idx, 0]).strip().lower()
+                if above in ("unit", "units", "uom") or _keyword_match(above):
+                    header_row_idx -= 1
+                else:
+                    break
             logs.append(
                 f"[Excel] Sheet '{sheet_name}': PFAS data region row {ri + 1}+ | "
                 f"header row: {header_row_idx + 1 if header_row_idx is not None else 'N/A'} | "
@@ -541,6 +558,11 @@ def _parse_excel_sheet(
     for ri in rows_to_scan_for_unit:
         if ri >= len(df_raw):
             continue
+        # A chemistry row ("COD = 300 mg/L") says nothing about the PFAS unit, and
+        # taking its mg/L for ng/L results would be a million-fold error.
+        first_cell = str(df_raw.iloc[ri, 0]).strip()
+        if _keyword_match(first_cell.lower()) and not _looks_like_pfas(first_cell):
+            continue
         row_text = " ".join(str(v) for v in df_raw.iloc[ri] if str(v) not in ("nan", "None"))
         detected = detect_unit_from_text(row_text)
         if detected:
@@ -568,6 +590,14 @@ def _parse_excel_sheet(
         sample_names = [f"Sample_{i + 1}" for i in range(n_cols - 1)]
 
     logs.append(f"[Excel] Sheet '{sheet_name}': sample columns {sample_names}")
+
+    unit_col: Optional[int] = None
+    if header_row_idx is not None and header_row_idx >= 0:
+        for ci in range(1, n_cols):
+            header = str(df_raw.iloc[header_row_idx, ci]).strip().lower()
+            if header in ("unit", "units", "uom", "unité", "unités", "einheit", "unidad"):
+                unit_col = ci
+                break
 
     # ── Step 4: Parse concentration rows ────────────────────────────────────
     pfas_data: Dict[str, Dict[str, float]] = {s: {} for s in sample_names}
@@ -655,6 +685,10 @@ def _parse_excel_sheet(
 
         analyte = normalize_pfas_name(analyte_raw)
 
+        row_unit = unit
+        if unit_col is not None and unit_col < len(row):
+            row_unit = detect_unit_from_text(str(row.iloc[unit_col])) or unit
+
         if (
             analyte not in PFAS_SPECIES_DB
             and not _looks_like_pfas(analyte_raw)
@@ -672,7 +706,7 @@ def _parse_excel_sheet(
             raw_val = row.iloc[ci + 1] if (ci + 1) < len(row) else None
             val = parse_numeric_value(raw_val)
             if val is not None:
-                val_mg_L = convert_to_mg_L(val, unit)
+                val_mg_L = convert_to_mg_L(val, row_unit)
                 if val_mg_L is not None:
                     pfas_data[sample_name][analyte] = val_mg_L
                     row_had_numeric = True
@@ -695,9 +729,9 @@ def _parse_excel_sheet(
                 if analyte not in nd_data[sample_name]:
                     nd_data[sample_name].append(analyte)
 
-    # Remove empty samples
-    pfas_data = {k: v for k, v in pfas_data.items() if v}
-    nd_data = {k: v for k, v in nd_data.items() if v}
+    # Remove empty samples, and columns that describe the result instead of being one
+    pfas_data = {k: v for k, v in pfas_data.items() if v and not _NOT_A_SAMPLE.match(k)}
+    nd_data = {k: v for k, v in nd_data.items() if v and not _NOT_A_SAMPLE.match(k)}
     result.pfas_samples = pfas_data
     result.nd_species = nd_data
 
@@ -1877,26 +1911,6 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
 # UNIFIED PARSE ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def pdf_to_plain_text(file_bytes: bytes, filename: str, max_pages: int = 50) -> str:
-    """
-    Extract plain text from a text-based PDF (e.g. an exported email thread).
-    Returns "" for scanned / image-only PDFs or unreadable files.
-    """
-    try:
-        import pdfplumber
-    except ImportError:
-        return ""
-    try:
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            pages = [
-                page.extract_text(x_tolerance=3, y_tolerance=3) or ""
-                for page in pdf.pages[:max_pages]
-            ]
-    except Exception:
-        return ""
-    return "\n\n".join(p for p in pages if p.strip())
-
-
 def _rename_colliding_samples(
     result: ParsedData, existing: Dict[str, Any], filename: str
 ) -> None:
@@ -1911,43 +1925,128 @@ def _rename_colliding_samples(
         for per_sample in (result.nd_species, result.aof_tof_data, result.sample_metadata):
             if old in per_sample:
                 per_sample[new] = per_sample.pop(old)
-        result.warnings.append(
-            f"[Parser] Sample '{old}' appears in more than one upload; "
+        message = (
+            f"Sample '{old}' appears in more than one upload; "
             f"renamed to '{new}' to keep them separate."
         )
+        result.warnings.append(f"[Parser] {message}")
+        result.data_checks.append({"level": "warning", "message": message})
+
+
+def _table_has_pfas(df: "pd.DataFrame") -> bool:
+    """Word or web tables also hold addresses and methods; only real results count."""
+    if df is None or df.empty or len(df.columns) < 2:
+        return False
+    for cell in df.iloc[:, 0]:
+        text = str(cell).strip()
+        if normalize_pfas_name(text) in PFAS_SPECIES_DB or _looks_like_pfas(text):
+            return True
+    return _detect_transposed_layout(df)
+
+
+def parse_table_document(doc: ReadDocument) -> ParsedData:
+    """PFAS results and matrix parameters from the tables of a non-spreadsheet document."""
+    result = ParsedData()
+    logs = result.logs
+    for title, df in doc.tables.items():
+        if not _table_has_pfas(df):
+            continue
+        table = _parse_excel_sheet(df, title, doc.name, logs)
+        result.warnings += table.warnings
+        # One results table split across pages comes through as several tables.
+        for sample, data in table.pfas_samples.items():
+            result.pfas_samples.setdefault(sample, {}).update(data)
+        for sample, species in table.nd_species.items():
+            result.nd_species.setdefault(sample, []).extend(species)
+        for sample, bulk in table.aof_tof_data.items():
+            result.aof_tof_data.setdefault(sample, {}).update(bulk)
+    result.matrix_params = _extract_matrix_from_excel(doc.tables, logs)
+    return result
+
+
+def describe_source(doc: ReadDocument, images_read: bool = False) -> Dict[str, str]:
+    """One row of the report's source-file table."""
+    if doc.kind == KIND_UNREADABLE:
+        read_as = "Not read"
+    else:
+        parts = []
+        if doc.kind == KIND_SPREADSHEET or doc.tables:
+            parts.append("Tables")
+        if doc.prose.strip():
+            parts.append("Text")
+        if doc.images:
+            parts.append(
+                f"{len(doc.images)} image(s), read twice" if images_read
+                else f"{len(doc.images)} image(s) NOT read"
+            )
+        read_as = ", ".join(parts) or "No content"
+    return {"file": doc.name, "format": doc.fmt, "read_as": read_as, "note": " ".join(doc.notes)}
+
+
+def _flag_if_empty(result: ParsedData, doc: ReadDocument) -> None:
+    if not (result.pfas_samples or result.nd_species or result.matrix_params):
+        result.data_checks.append({
+            "level": "warning",
+            "message": (
+                f"No PFAS or water-quality values were found in '{doc.name}'. "
+                "If it does hold results, turn on Enhanced document reading or check its layout."
+            ),
+        })
 
 
 def parse_all(
-    excel_files: List[Tuple[bytes, str]],
-    pdf_files: List[Tuple[bytes, str]],
+    documents: List[ReadDocument],
     email_text: str,
     goals_text: str,
 ) -> ParsedData:
     """
     Parse all available input sources and return a merged ParsedData.
 
-    excel_files / pdf_files are lists of (file_bytes, filename).
-    Priority for conflicting concentration values: Excel > PDF > Text.
+    Priority for conflicting concentration values:
+    spreadsheet and document tables > PDF > free text.
     """
     combined = ParsedData()
     combined.logs.append("=== Parser started ===")
 
-    # Parse Excel files
-    excel_samples: Dict[str, Any] = {}
-    for excel_bytes, excel_filename in excel_files:
-        excel_result = parse_excel(excel_bytes, excel_filename)
-        _rename_colliding_samples(excel_result, excel_samples, excel_filename)
-        if excel_result.has_pfas_data and not excel_samples:
-            combined.detected_unit = excel_result.detected_unit
-        excel_samples.update(excel_result.pfas_samples)
-        combined.merge(excel_result)
+    for doc in documents:
+        combined.source_files.append(describe_source(doc))
+        combined.data_checks += [{"level": "critical", "message": m} for m in doc.problems]
+        if doc.images:
+            combined.data_checks.append({
+                "level": "critical",
+                "message": (
+                    f"'{doc.name}': {len(doc.images)} image(s) or scanned page(s) were NOT read. "
+                    "Standard parsing cannot read images; turn on Enhanced document reading."
+                ),
+            })
+
+    # Spreadsheets and tables in documents
+    table_samples: Dict[str, Any] = {}
+    for doc in documents:
+        if doc.kind == KIND_SPREADSHEET:
+            table_result = parse_excel(doc.data, doc.name)
+        elif doc.kind == KIND_DOCUMENT and doc.tables:
+            table_result = parse_table_document(doc)
+            table_result.has_other = True
+        else:
+            continue
+        _rename_colliding_samples(table_result, table_samples, doc.name)
+        if table_result.has_pfas_data and not table_samples:
+            combined.detected_unit = table_result.detected_unit
+        table_samples.update(table_result.pfas_samples)
+        _flag_if_empty(table_result, doc)
+        combined.merge(table_result)
 
     # Parse PDF files
     pdf_samples: Dict[str, Any] = {}
-    for pdf_bytes, pdf_filename in pdf_files:
-        pdf_result = parse_pdf(pdf_bytes, pdf_filename)
-        _rename_colliding_samples(pdf_result, pdf_samples, pdf_filename)
+    for doc in documents:
+        if doc.kind != KIND_PDF:
+            continue
+        pdf_result = parse_pdf(doc.data, doc.name)
+        _rename_colliding_samples(pdf_result, pdf_samples, doc.name)
         pdf_samples.update(pdf_result.pfas_samples)
+        _flag_if_empty(pdf_result, doc)
+        combined.data_checks += pdf_result.data_checks
         # A PDF sample with the same name as an Excel sample is the same report
         # in two formats — keep the Excel values, don't duplicate.
         for sample, data in pdf_result.pfas_samples.items():
@@ -1961,6 +2060,23 @@ def parse_all(
         combined.errors += pdf_result.errors
         if pdf_result.has_pdf:
             combined.has_pdf = True
+
+    # Prose of lab documents supplies values only. It is kept out of the notes
+    # text because engine keyword rules (such as AN-1 on "drinking water") would
+    # otherwise fire on a lab report's method descriptions.
+    prose_docs = [d for d in documents if d.kind == KIND_DOCUMENT and d.prose.strip()]
+    if prose_docs:
+        combined.has_other = True
+        prose_result = parse_text("\n".join(d.prose for d in prose_docs), "")
+        combined.matrix_params.update(
+            {k: v for k, v in prose_result.matrix_params.items() if k not in combined.matrix_params}
+        )
+        combined.keyword_species += [
+            k for k in prose_result.keyword_species if k not in combined.keyword_species
+        ]
+        if not combined.has_pfas_data and prose_result.has_pfas_data:
+            combined.pfas_samples.update(prose_result.pfas_samples)
+        combined.logs += prose_result.logs
 
     # Parse text
     text_result = parse_text(email_text, goals_text)

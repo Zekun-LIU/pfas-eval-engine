@@ -602,10 +602,16 @@ def parse_numeric_value(raw: Any) -> Optional[float]:
     if s.startswith("<") or s.startswith("≤"):
         return None  # do_not_assume_zero per spec
 
-    # Distinguish European decimal comma ("1,5" → 1.5) from
-    # thousands separator ("1,234" → 1234).
-    # Heuristic: single comma followed by exactly 1–2 digits at end = decimal.
-    if re.match(r"^\d+,\d{1,2}$", s):
+    # Distinguish European decimal comma ("1,5" → 1.5, "0,125" → 0.125) from
+    # thousands separator ("1,234" → 1234). With both separators present, the
+    # last one is the decimal point ("1.234,5" → 1234.5, "1,234.5" → 1234.5).
+    s = re.sub(r"(?<=\d)[ \u00a0\u202f](?=\d{3}\b)", "", s)
+    if "," in s and "." in s:
+        s_clean = (
+            s.replace(".", "").replace(",", ".")
+            if s.rfind(",") > s.rfind(".") else s.replace(",", "")
+        )
+    elif re.match(r"^\d+,\d{1,2}$", s) or re.match(r"^0,\d+$", s):
         s_clean = s.replace(",", ".")
     else:
         s_clean = s.replace(",", "").strip()

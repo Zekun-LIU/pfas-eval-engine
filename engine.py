@@ -1518,6 +1518,8 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         data_sources.append("Excel file")
     if parsed.has_pdf:
         data_sources.append("PDF lab report")
+    if parsed.has_other:
+        data_sources.append("other documents")
     if parsed.has_text:
         data_sources.append("pasted text / notes")
 

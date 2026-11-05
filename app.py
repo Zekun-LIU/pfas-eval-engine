@@ -39,7 +39,8 @@ from engine import (
     M3_TKN_HIGH, M3_METAL_FLAG_PPM,
     TOF_COVERAGE_THRESHOLD,
 )
-from parser import ParsedData, parse_all, pdf_to_plain_text
+from file_readers import ACCEPTED_FORMATS_LABEL, read_upload, split_context_documents
+from parser import ParsedData, parse_all
 from utils import (
     CATEGORY_LABELS,
     format_conc_auto,
@@ -827,7 +828,7 @@ def _render_module3(m3: Module3Result, num: str | None = None) -> None:
         st.caption(f"Not provided: {', '.join(str(p) for p in m3.missing_params)}")
 
 
-def _build_text_report(result: EvaluationResult) -> str:
+def _build_text_report(result: EvaluationResult, parsed: "ParsedData | None" = None) -> str:
     """Build a plain-text version of the full technical report for download."""
     from datetime import date
 
@@ -844,6 +845,15 @@ def _build_text_report(result: EvaluationResult) -> str:
         *[f"  - {r}" for r in result.status_reasons],
         "",
     ]
+
+    if parsed and parsed.source_files:
+        lines.append("SOURCE FILES:")
+        lines += [f"  - {r['file']} ({r['format']}): {r['read_as']}" for r in parsed.source_files]
+        lines.append("")
+    if parsed and parsed.data_checks:
+        lines.append("DATA CHECKS (confirm against the source files):")
+        lines += [f"  - [{c['level'].upper()}] {c['message']}" for c in parsed.data_checks]
+        lines.append("")
 
     if getattr(result, "analytical_flag", None):
         af = result.analytical_flag
@@ -934,6 +944,41 @@ def _build_text_report(result: EvaluationResult) -> str:
     return "\n".join(lines)
 
 
+def _render_data_intake(parsed: "ParsedData") -> None:
+    """What was read from each file, and every value a person should check by eye."""
+    if parsed.source_files:
+        _html_table([
+            {
+                "File": row["file"],
+                "Format": row["format"],
+                "Read as": row["read_as"],
+                **({"Note": row["note"]} if any(r["note"] for r in parsed.source_files) else {}),
+            }
+            for row in parsed.source_files
+        ])
+    if parsed.data_checks:
+        order = {"critical": 0, "warning": 1}
+        rows = sorted(parsed.data_checks, key=lambda c: order.get(c["level"], 2))
+        _html_table(
+            [
+                {
+                    "Level": _sev_html(c["level"], "Problem" if c["level"] == "critical" else "Check"),
+                    "Item": html.escape(c["message"]),
+                }
+                for c in rows
+            ],
+            html_cols=("Level", "Item"),
+        )
+    elif parsed.source_files:
+        st.markdown(
+            '<div class="muted">No read problems found. Every text value was located in its '
+            "source, and any image values agreed across both reads.</div>"
+            if parsed.llm_raw_response else
+            '<div class="muted">No read problems found by the standard parser.</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | None" = None) -> None:
     """Render the full technical report as numbered report sections."""
     sec = iter(range(1, 20))
@@ -967,6 +1012,11 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         st.caption(
             f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)"
         )
+
+    # ── What was read ─────────────────────────────────────────────────────────
+    if parsed and (parsed.source_files or parsed.data_checks):
+        _heading("Source files and data checks", str(next(sec)))
+        _render_data_intake(parsed)
 
     # ── Analytical feasibility (AN-1) ─────────────────────────────────────────
     if getattr(result, "analytical_flag", None):
@@ -1033,7 +1083,7 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.download_button(
         "Download technical report (.txt)",
-        data=_build_text_report(result),
+        data=_build_text_report(result, parsed),
         file_name="PFAS_Evaluation_Report.txt",
         mime="text/plain",
     )
@@ -1319,32 +1369,24 @@ st.markdown(
 # INPUT ROW — horizontal single row
 # ═══════════════════════════════════════════════════════════════════════════════
 
-inp_a, inp_b, inp_c, inp_d = st.columns([1, 1, 1.5, 1.5], gap="medium")
+inp_a, inp_c, inp_d = st.columns([1.2, 1.4, 1.4], gap="medium")
 
 with inp_a:
-    st.markdown('<div class="field-label">Lab data (Excel)</div>', unsafe_allow_html=True)
-    excel_files = st.file_uploader(
-        "Excel",
-        type=["xlsx", "xls", "csv"],
+    st.markdown('<div class="field-label">Lab and water-quality data</div>', unsafe_allow_html=True)
+    lab_files = st.file_uploader(
+        "Lab data",
         accept_multiple_files=True,
+        key="lab_files",
         help=(
-            "PFAS results and/or general water chemistry. Units are detected automatically. "
-            "Multiple files allowed."
+            f"{ACCEPTED_FORMATS_LABEL}. PFAS results and general water chemistry can be in "
+            "separate files. Photos and scans need Enhanced document reading."
         ),
         label_visibility="collapsed",
     )
-
-with inp_b:
-    st.markdown('<div class="field-label">Lab reports (PDF)</div>', unsafe_allow_html=True)
-    pdf_files = st.file_uploader(
-        "PDF",
-        type=["pdf"],
-        accept_multiple_files=True,
-        help=(
-            "PFAS or general-chemistry lab reports. Table and text-based PDFs supported. "
-            "Multiple files allowed."
-        ),
-        label_visibility="collapsed",
+    st.markdown(
+        f'<div class="field-sublabel">{ACCEPTED_FORMATS_LABEL}. Any file can be added; '
+        "the report lists anything that could not be read.</div>",
+        unsafe_allow_html=True,
     )
 
 with inp_c:
@@ -1359,15 +1401,14 @@ with inp_c:
         help="Scanned for PFAS species, inline concentrations, and matrix parameters.",
         label_visibility="collapsed",
     )
-    st.markdown('<div class="field-sublabel">Email PDFs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-sublabel">Email files</div>', unsafe_allow_html=True)
     notes_pdfs = st.file_uploader(
-        "Email PDFs",
-        type=["pdf"],
+        "Email files",
         accept_multiple_files=True,
         key="notes_pdfs",
         help=(
-            "Customer email threads exported to PDF. Their text is read together with the "
-            "notes above. Text-based PDFs only; scanned images cannot be read."
+            "Email threads as .msg, .eml or PDF, or any other document. Their text is read "
+            "with the notes above. Attachments holding results are read as lab data."
         ),
         label_visibility="collapsed",
     )
@@ -1387,21 +1428,17 @@ with inp_d:
         ),
         label_visibility="collapsed",
     )
-    st.markdown('<div class="field-sublabel">Context PDFs</div>', unsafe_allow_html=True)
+    st.markdown('<div class="field-sublabel">Context files</div>', unsafe_allow_html=True)
     goals_pdfs = st.file_uploader(
-        "Context PDFs",
-        type=["pdf"],
+        "Context files",
         accept_multiple_files=True,
         key="goals_pdfs",
-        help=(
-            "Specs, RFQs or email threads describing treatment goals, flow rate or site context. "
-            "Text-based PDFs only; scanned images cannot be read."
-        ),
+        help="Specs, RFQs or email threads describing treatment goals, flow rate or site context.",
         label_visibility="collapsed",
     )
 
 _any_input = bool(
-    excel_files or pdf_files or notes_pdfs or goals_pdfs
+    lab_files or notes_pdfs or goals_pdfs
     or email_text.strip() or goals_text.strip()
 )
 
@@ -1415,10 +1452,8 @@ _api_key = _get_api_key()
 
 with ctrl_a:
     _inputs: list[str] = []
-    if excel_files:
-        _inputs.append(f"Excel ({len(excel_files)})")
-    if pdf_files:
-        _inputs.append(f"PDF ({len(pdf_files)})")
+    if lab_files:
+        _inputs.append(f"{len(lab_files)} data file(s)")
     if email_text.strip() or notes_pdfs:
         _inputs.append("customer notes")
     if goals_text.strip() or goals_pdfs:
@@ -1479,42 +1514,42 @@ if run_clicked:
         import time as _time
 
         # Read file bytes in main thread (UploadedFile is not thread-safe)
-        _excel_list = [(f.getvalue(), f.name) for f in excel_files]
-        _pdf_list   = [(f.getvalue(), f.name) for f in pdf_files]
-        _notes_att  = [(f.getvalue(), f.name) for f in notes_pdfs]
-        _goals_att  = [(f.getvalue(), f.name) for f in goals_pdfs]
+        _lab_uploads   = [(f.getvalue(), f.name) for f in lab_files]
+        _notes_uploads = [(f.getvalue(), f.name) for f in notes_pdfs]
+        _goals_uploads = [(f.getvalue(), f.name) for f in goals_pdfs]
 
         # Shared state between main and background threads
         _shared: dict = {"parsed": None, "eval_result": None, "error": None, "done": False}
 
-        def _with_attachments(
-            typed: str, attachments: list, kind: str, warnings: list
-        ) -> str:
-            """Append text extracted from attached PDFs to the typed text box content."""
-            parts = [typed.strip()] if typed.strip() else []
-            for _bytes, _name in attachments:
-                _txt = pdf_to_plain_text(_bytes, _name)
-                if _txt.strip():
-                    parts.append(f"[Attached {kind} PDF: {_name}]\n{_txt}")
-                else:
-                    warnings.append(
-                        f"[Attachment] No readable text in '{_name}'; it may be a scanned "
-                        "image. Copy the key text into the box instead."
-                    )
-            return "\n\n".join(parts)
+        def _read_context(typed: str, uploads: list) -> tuple:
+            """Typed text plus uploaded context files; results inside them count as lab data."""
+            docs = [d for _bytes, _name in uploads for d in read_upload(_bytes, _name)]
+            attached, lab_docs = split_context_documents(docs)
+            return "\n\n".join(t for t in (typed.strip(), attached) if t), lab_docs
 
         def _background_work() -> None:
             """Run parse + evaluate in background so main thread can animate progress."""
             try:
-                _att_warnings: list = []
-                _notes_full = _with_attachments(email_text, _notes_att, "email", _att_warnings)
-                _goals_full = _with_attachments(goals_text, _goals_att, "context", _att_warnings)
+                _documents: list = []
+                _email_bodies: list = []
+                for _bytes, _name in _lab_uploads:
+                    for _doc in read_upload(_bytes, _name):
+                        if _doc.is_correspondence:
+                            _email_bodies.append(_doc)
+                        else:
+                            _documents.append(_doc)
+                _notes_full, _notes_lab = _read_context(email_text, _notes_uploads)
+                _goals_full, _goals_lab = _read_context(goals_text, _goals_uploads)
+                _documents += _notes_lab + _goals_lab
+                if _email_bodies:
+                    _body_text, _body_lab = split_context_documents(_email_bodies)
+                    _notes_full = "\n\n".join(t for t in (_notes_full, _body_text) if t)
+                    _documents += _body_lab
 
                 if use_llm and _api_key:
                     from llm_parser import parse_with_llm
                     _p = parse_with_llm(
-                        excel_files=_excel_list,
-                        pdf_files=_pdf_list,
+                        _documents,
                         goals_text=_goals_full,
                         api_key=_api_key,
                         notes_text=_notes_full,
@@ -1529,15 +1564,7 @@ if run_clicked:
                         _p.merge(_t)
                         _p.customer_notes_text = _notes_full
                 else:
-                    _p = parse_all(
-                        excel_files=_excel_list,
-                        pdf_files=_pdf_list,
-                        email_text=_notes_full,
-                        goals_text=_goals_full,
-                    )
-                _p.warnings += _att_warnings
-                for _, _name in _notes_att + _goals_att:
-                    _p.logs.append(f"[Attachment] Read '{_name}'")
+                    _p = parse_all(_documents, email_text=_notes_full, goals_text=_goals_full)
                 _shared["parsed"]      = _p
                 _shared["eval_result"] = evaluate(_p)
             except Exception as _exc:
@@ -1609,6 +1636,12 @@ with tab_email:
     else:
         llm_email = st.session_state.get("llm_email")
         _parsed_data = st.session_state.get("parsed_data")
+        if _parsed_data and _parsed_data.data_checks:
+            st.markdown(
+                f'<div class="note note-warning">{len(_parsed_data.data_checks)} data check(s) '
+                "are open. Review them in the technical report before sending this draft.</div>",
+                unsafe_allow_html=True,
+            )
 
         # Generate email now (user is already looking at Technical Output tab)
         if llm_email is None and use_llm and _api_key and _parsed_data:
