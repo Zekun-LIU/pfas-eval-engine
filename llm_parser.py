@@ -393,8 +393,7 @@ def _excel_to_text(
 # LLM CALL
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_TEXT_MODEL = "claude-sonnet-4-5"
-_VISION_MODEL = "claude-opus-5-5"
+MODEL = "claude-opus-5-5"
 _MAX_OUTPUT_TOKENS = 64_000
 
 
@@ -404,10 +403,39 @@ def _message_text(message: Any) -> str:
         raise RuntimeError("the model declined to read this content")
     if message.stop_reason == "max_tokens":
         raise RuntimeError(
-            "the data is too large for one reading, so the output was cut off. "
-            "Upload fewer files per run."
+            "the output was cut off at the token limit. Upload fewer files per run."
         )
     return "".join(block.text for block in message.content if block.type == "text").strip()
+
+
+def call_claude(
+    api_key: str,
+    system: str,
+    content: Any,
+    max_tokens: int = _MAX_OUTPUT_TOKENS,
+    effort: str = "high",
+) -> str:
+    """
+    One Claude request, returning its final text. Streams because long requests
+    can outlast a non-streaming HTTP timeout. A request declined by a safety
+    classifier is retried server-side on another model.
+    """
+    try:
+        import anthropic
+    except ImportError as e:
+        raise RuntimeError("anthropic package not installed. Run: pip install anthropic") from e
+
+    client = anthropic.Anthropic(api_key=api_key)
+    with client.beta.messages.stream(
+        model=MODEL,
+        max_tokens=max_tokens,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        output_config={"effort": effort},
+        system=system,
+        messages=[{"role": "user", "content": content}],
+    ) as stream:
+        return _message_text(stream.get_final_message())
 
 
 def _user_content(
@@ -454,41 +482,10 @@ def _call_claude_parser(
     Send documents to Claude for structured PFAS data extraction.
     Returns (raw_response_text, parsed_dict).
     Raises on API error, an incomplete response or JSON parse failure.
-
-    Streams because large CofA files with 50+ analytes across 8+ samples need
-    more output than a non-streaming request can safely wait for.
     """
-    try:
-        import anthropic
-    except ImportError as e:
-        raise RuntimeError("anthropic package not installed. Run: pip install anthropic") from e
-
-    messages = [{
-        "role": "user",
-        "content": _user_content(document_text, goals_text, notes_text, images),
-    }]
-    client = anthropic.Anthropic(api_key=api_key)
-    if images:
-        with client.beta.messages.stream(
-            model=_VISION_MODEL,
-            max_tokens=_MAX_OUTPUT_TOKENS,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-            output_config={"effort": "high"},
-            system=_SYSTEM_PROMPT,
-            messages=messages,
-        ) as stream:
-            message = stream.get_final_message()
-    else:
-        with client.messages.stream(
-            model=_TEXT_MODEL,
-            max_tokens=_MAX_OUTPUT_TOKENS,
-            system=_SYSTEM_PROMPT,
-            messages=messages,
-        ) as stream:
-            message = stream.get_final_message()
-
-    raw = _message_text(message)
+    raw = call_claude(
+        api_key, _SYSTEM_PROMPT, _user_content(document_text, goals_text, notes_text, images)
+    )
 
     # Strip markdown fences if the model added them despite instructions
     clean = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -505,17 +502,13 @@ def _call_claude_parser(
     return raw, data
 
 
-# Keep legacy name as alias so any external callers are unaffected
-_call_claude_haiku = _call_claude_parser
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # JSON → ParsedData MAPPING
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def parse_from_llm_json(data: dict, goals_text: str = "") -> ParsedData:
     """
-    Map the structured JSON returned by Claude Haiku to a ParsedData object.
+    Map the structured JSON returned by Claude to a ParsedData object.
     The resulting ParsedData is consumed by the unchanged expert engine.
     """
     result = ParsedData()

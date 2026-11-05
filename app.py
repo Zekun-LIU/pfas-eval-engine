@@ -70,14 +70,9 @@ def _get_api_key() -> str | None:
 
 def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key: str) -> str:
     """
-    Use Claude Sonnet to write a professional business email from evaluation results.
+    Use Claude to write a professional business email from evaluation results.
     Falls back to the template draft if the API call fails.
     """
-    try:
-        import anthropic
-    except ImportError:
-        return result.email_draft
-
     # Build a compact structured summary for the LLM
     lines: list[str] = [f"OVERALL STATUS: {result.overall_status}"]
     if project_context.get("customer_name"):
@@ -129,7 +124,7 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
                 if s.detected:
                     lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)}")
 
-    # Key flags — include all severities for Sonnet to reason over
+    # Key flags — include all severities for the model to reason over
     lines.append("\nKEY FLAGS:")
     seen: set = set()
     for sr in result.samples:
@@ -188,14 +183,10 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
     )
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=1500,
-            system=system,
-            messages=[{"role": "user", "content": f"EVALUATION RESULTS:\n{summary}"}],
+        from llm_parser import call_claude
+        return call_claude(
+            api_key, system, f"EVALUATION RESULTS:\n{summary}", max_tokens=16_000, effort="medium"
         )
-        return msg.content[0].text.strip()
     except Exception as exc:
         return f"[AI email generation failed: {exc}]\n\n{result.email_draft}"
 
