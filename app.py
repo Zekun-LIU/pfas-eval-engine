@@ -39,6 +39,9 @@ from engine import (
     M3_TKN_HIGH, M3_METAL_FLAG_PPM,
     TOF_COVERAGE_THRESHOLD,
 )
+from email_drafts import (
+    fill_recipient, generate_enhanced_email, generate_supervised_email, load_style_guide,
+)
 from file_readers import ACCEPTED_FORMATS_LABEL, read_upload, split_context_documents
 from parser import (
     ParsedData, describe_flow, design_flow_gpm, parse_all, sample_matrices, screening_matrix,
@@ -65,152 +68,6 @@ def _get_api_key() -> str | None:
     except Exception:
         return None
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# LLM EMAIL GENERATOR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key: str) -> str:
-    """
-    Use Claude to write a professional business email from evaluation results.
-    Falls back to the template draft if the API call fails.
-    """
-    # Build a compact structured summary for the LLM
-    lines: list[str] = [f"OVERALL STATUS: {result.overall_status}"]
-    if project_context.get("customer_name"):
-        lines.append(f"CUSTOMER: {project_context['customer_name']}")
-    if project_context.get("site_name"):
-        lines.append(f"SITE: {project_context['site_name']}")
-    if project_context.get("country"):
-        lines.append(f"COUNTRY: {project_context['country']}")
-    if project_context.get("throughput_gpm"):
-        lines.append(f"THROUGHPUT: {project_context['throughput_gpm']:.0f} GPM"
-                     + (" ⚠️ LARGE-SCALE (>100 GPM)" if float(project_context['throughput_gpm']) > 100 else ""))
-    if project_context.get("flow_rate_display"):
-        lines.append(f"  ({project_context['flow_rate_display']} as reported)")
-
-    # Worst-case sample PFAS profile
-    worst = None
-    if result.samples:
-        worst = max(
-            result.samples,
-            key=lambda sr: (
-                {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
-                sr.module1.total_conc_mg_L,
-            ),
-        )
-    if worst and worst.module1.total_conc_mg_L > 0:
-        m1 = worst.module1
-        lines.append(f"\nPFAS PROFILE (WORST CASE: {worst.sample_name}):")
-        lines.append(f"  Total PFAS: {format_conc_auto(m1.total_conc_mg_L)}")
-        for s in m1.species[:6]:
-            if s.detected:
-                lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)} ({s.percentage:.1f}%)")
-        for cat, frac in sorted(m1.category_fractions.items(), key=lambda x: -x[1]):
-            if frac > 0.01:
-                lines.append(f"  Category {CATEGORY_LABELS.get(cat, cat)}: {format_pct(frac * 100)}")
-        # TOF coverage
-        if worst.tof_result is not None:
-            tof = worst.tof_result
-            lines.append(
-                f"  TOF Coverage: {tof.coverage_ratio * 100:.1f}% "
-                f"(theoretical {format_conc_auto(tof.theoretical_tof_mg_L)} vs "
-                f"reported {tof.measured_type} {format_conc_auto(tof.measured_mg_L)})"
-            )
-            if tof.unknown_pfas_flag:
-                lines.append("  ⚠️ LOW TOF COVERAGE: significant unknown/unidentified PFAS present")
-
-        # Average case if available
-        if worst.avg_module1 is not None:
-            avg_m1 = worst.avg_module1
-            lines.append(f"\nPFAS PROFILE (AVERAGE / STEADY-STATE):")
-            lines.append(f"  Total PFAS: {format_conc_auto(avg_m1.total_conc_mg_L)}")
-            for s in avg_m1.species[:4]:
-                if s.detected:
-                    lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)}")
-
-    if result.comparison is not None:
-        lines.append("\nSAMPLE COMPARISON AND BASIS OF DESIGN:")
-        if result.comparison.legend:
-            lines.append(f"  Sample labels: {result.comparison.legend}")
-        for text in (result.comparison.headline, *result.comparison.findings,
-                     *result.comparison.design_notes):
-            lines.append(f"  - {text}")
-    flows = {n: f for n, f in result.sample_flow.items() if describe_flow(f)}
-    if flows:
-        lines.append("\nFLOW BY SAMPLE:")
-        for name, flow in flows.items():
-            hours = f", {flow['hours_avg']:g} h/day" if flow.get("hours_avg") is not None else ""
-            lines.append(f"  {name}: {describe_flow(flow)}{hours}")
-
-    # Key flags — include all severities for the model to reason over
-    lines.append("\nKEY FLAGS:")
-    seen: set = set()
-    for sr in result.samples:
-        for f in sr.module2.flags:
-            if f.severity in ("critical", "commercial", "technical", "pathway") and f.message not in seen:
-                lines.append(f"  [{f.severity.upper()}] {f.message}")
-                seen.add(f.message)
-    for f in result.module3.flags:
-        if f.severity in ("warning", "commercial") and f.message not in seen:
-            lines.append(f"  [MATRIX/PROJ] {f.message}")
-            seen.add(f.message)
-
-    if getattr(result, "analytical_flag", None):
-        lines.append("\nANALYTICAL CONSTRAINT:")
-        lines.append(f"  [WARNING] {result.analytical_flag.message}")
-        lines.append(f"  {result.analytical_flag.detail}")
-
-    lines.append("\nTREATMENT IMPLICATIONS:")
-    for item in result.treatment_summary[:5]:
-        lines.append(f"  - {item}")
-
-    if result.missing_info:
-        lines.append("\nMISSING INFORMATION:")
-        for item in result.missing_info[:5]:
-            lines.append(f"  - {item}")
-
-    summary = "\n".join(lines)
-
-    system = (
-        "You are a senior technical sales engineer at Claros Water Technologies writing an "
-        "internal business email to your team about a PFAS treatment opportunity.\n\n"
-        "Write a professional, clear email (280–380 words) grounded in the evaluation data.\n\n"
-        "FORMAT:\n"
-        "Subject: PFAS Treatment Feasibility: [customer/site descriptor + status]\n\n"
-        "[Opening, 2 sentences: opportunity context, overall verdict]\n\n"
-        "[PFAS Profile, 3 sentences: key species with actual concentrations, composition "
-        "category, TOF coverage finding if relevant]\n\n"
-        "[Key Technical Findings, 4-6 bullet points drawn from the evaluation flags]\n\n"
-        "[Scale & Project Context, 1 short paragraph: throughput, any large-scale flag, "
-        "site/country context]\n\n"
-        "[Recommendation, 1 paragraph: PROCEED / PROCEED WITH CONDITIONS / DO NOT PROCEED "
-        "with specific reasoning]\n\n"
-        "[Next Steps, 3 concrete action items]\n\n"
-        "Claros Product Development Team | PFAS Evaluation Engine\n\n"
-        "RULES:\n"
-        "- Use actual species names and concentrations from the data; never invent numbers.\n"
-        "- If CRITICAL flag exists, lead with it in the opening.\n"
-        "- If TOF coverage is low (<50%), name it as a key risk: unknown PFAS cannot be "
-        "guaranteed to be treated.\n"
-        "- If an ANALYTICAL CONSTRAINT is present (ultra-low / drinking-water target), state "
-        "it clearly: analytical capability must be confirmed before testing, and the "
-        "treatability timeline extends 2–3 weeks for contamination control.\n"
-        "- If throughput >100 GPM, call out the large-scale flag explicitly.\n"
-        "- If a SAMPLE COMPARISON is present, say whether the samples are uniform, give the "
-        "max/min spread in total PFAS and the largest single differences, and state what that "
-        "means for the basis of design. Report flow per sample when it is given per sample.\n"
-        "- Do not use em dashes; use commas, colons, semicolons or full stops instead.\n"
-        "- Return ONLY the email text: no markdown fencing, no preamble."
-    )
-
-    try:
-        from llm_parser import call_claude
-        return call_claude(
-            api_key, system, f"EVALUATION RESULTS:\n{summary}", max_tokens=16_000, effort="medium"
-        )
-    except Exception as exc:
-        return f"[AI email generation failed: {exc}]\n\n{result.email_draft}"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GLOBAL CSS
@@ -1281,10 +1138,10 @@ def _render_email_draft(result: EvaluationResult, email_text_override: str | Non
 
     _heading("Internal email draft")
     st.caption("Generated from the evaluation output. Review and edit before sending.")
-    st.markdown(
-        f'<div class="email-box">{email_text}</div>',
-        unsafe_allow_html=True,
-    )
+    # One HTML line with <br> breaks, so Markdown does not reflow the email's own
+    # line breaks, bullets or asterisks.
+    _body = "<br>".join(html.escape(email_text).splitlines())
+    st.markdown(f'<div class="email-box">{_body}</div>', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -1532,6 +1389,8 @@ if "parsed_data" not in st.session_state:
     st.session_state.parsed_data = None
 if "llm_email" not in st.session_state:
     st.session_state.llm_email = None
+if "supervised_email" not in st.session_state:
+    st.session_state.supervised_email = None
 if "test_plans" not in st.session_state:
     st.session_state.test_plans = None
 
@@ -1796,6 +1655,7 @@ if run_clicked:
             st.session_state.eval_result = _shared["eval_result"]
             st.session_state.parsed_data = _shared["parsed"]
             st.session_state.llm_email   = None   # generated lazily in email tab
+            st.session_state.supervised_email = None
             st.session_state.test_plans  = None   # regenerate on demand for new data
             st.rerun()
 
@@ -1824,45 +1684,72 @@ with tab_email:
             unsafe_allow_html=True,
         )
     else:
-        llm_email = st.session_state.get("llm_email")
         _parsed_data = st.session_state.get("parsed_data")
-        if _parsed_data and _parsed_data.data_checks:
+        _open_checks = len(_parsed_data.data_checks) if _parsed_data else 0
+        if _open_checks:
             st.markdown(
-                f'<div class="note note-warning">{len(_parsed_data.data_checks)} data check(s) '
+                f'<div class="note note-warning">{_open_checks} data check(s) '
                 "are open. Review them in the technical report before sending this draft.</div>",
                 unsafe_allow_html=True,
             )
 
-        # Generate email now (user is already looking at Technical Output tab)
-        if llm_email is None and use_llm and _api_key and _parsed_data:
-            _email_ph = st.empty()
-            _email_ph.markdown(
-                '<div class="muted">Writing the email draft…</div>',
-                unsafe_allow_html=True,
-            )
-            try:
-                llm_email = _generate_llm_email(
-                    result,
-                    _parsed_data.llm_project_context,
-                    _api_key,
-                )
-                st.session_state.llm_email = llm_email
-            except Exception:
-                llm_email = None
-                st.session_state.llm_email = None
-            _email_ph.empty()
-
-        if llm_email:
+        _SUPERVISED, _ENHANCED, _TEMPLATE = (
+            "Supervised Email Draft", "Enhanced Draft", "Template-Generated",
+        )
+        _can_write = bool(use_llm and _api_key and _parsed_data)
+        email_version = _TEMPLATE
+        if _can_write:
             email_version = st.radio(
                 "Email version:",
-                ["Enhanced Draft", "Template-Generated"],
+                [_SUPERVISED, _ENHANCED, _TEMPLATE],
                 horizontal=True,
                 label_visibility="collapsed",
+                key="email_version",
             )
-            chosen_email = llm_email if "Enhanced" in email_version else None
-            _render_email_draft(result, email_text_override=chosen_email)
-        else:
-            _render_email_draft(result)
+
+        def _written_once(state_key: str, write) -> str:
+            """Each draft is written when first chosen, then kept until the next evaluation."""
+            if st.session_state.get(state_key) is None:
+                _placeholder = st.empty()
+                _placeholder.markdown(
+                    '<div class="muted">Writing the email draft…</div>', unsafe_allow_html=True
+                )
+                st.session_state[state_key] = write()
+                _placeholder.empty()
+            return st.session_state[state_key]
+
+        chosen_email = None
+        if email_version == _SUPERVISED:
+            _guide_text, _guide = load_style_guide()
+            _name_col, _ = st.columns([1, 3])
+            with _name_col:
+                _recipient = st.text_input(
+                    "Recipient first name", key="email_recipient", placeholder="e.g. Mitch"
+                )
+            chosen_email = fill_recipient(
+                _written_once(
+                    "supervised_email",
+                    lambda: generate_supervised_email(
+                        result, _parsed_data.llm_project_context, _api_key, _open_checks
+                    ),
+                ),
+                _recipient,
+            )
+            st.caption(
+                f"Written to the style guide learned from Zack's sent replies: "
+                f"guide v{_guide.get('version', '?')}, based on {_guide.get('based on', 'no replies yet')}. "
+                f"Status: {_guide.get('status', 'not stated')}."
+            )
+        elif email_version == _ENHANCED:
+            chosen_email = _written_once(
+                "llm_email",
+                lambda: generate_enhanced_email(result, _parsed_data.llm_project_context, _api_key),
+            )
+
+        _render_email_draft(result, email_text_override=chosen_email)
+        if email_version == _SUPERVISED:
+            with st.expander(f"Style guide v{_guide.get('version', '?')}"):
+                st.markdown(_guide_text)
 
 # ── Tab 3: Bench Test Plan ────────────────────────────────────────────────────
 with tab_plan:
