@@ -7,5 +7,5 @@ textColor       = "#1B1B1B"
 borderColor     = "#CFCFCF"
 showWidgetBorder = true
 baseRadius      = "small"
-font            = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+font            = "Inter:https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap, sans-serif"
 codeFont        = "monospace"

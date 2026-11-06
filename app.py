@@ -76,7 +76,7 @@ def _get_api_key() -> str | None:
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap');
 
     :root {
         --ink: #1B1B1B;
@@ -92,26 +92,34 @@ st.markdown(
         --sev-commercial: #5B3A8C;
         --sev-technical: #8F5200;
         --sev-other: #555555;
-        /* SF Pro on Apple devices; Inter, its closest open relative, everywhere else */
+        /* SF Pro on Apple devices. Elsewhere Inter, its closest open relative, loaded with
+           its optical-size axis so headings get the display cut, and tracked a little
+           tighter because Inter is set looser than SF. One typeface throughout: codes and
+           rule IDs use it too; the monospace is only for raw logs. */
         --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI",
                 "Helvetica Neue", Arial, sans-serif;
         --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+        --track: -0.011em;
+        --track-display: -0.018em;
     }
 
     html, body, [class*="css"] {
         font-family: var(--sans);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        font-feature-settings: "cv11", "ss03";
+        font-optical-sizing: auto;
+        letter-spacing: var(--track);
         color: var(--ink);
         line-height: 1.5;
     }
     .block-container { padding-top: 3.4rem; padding-bottom: 2.5rem; max-width: 1180px; }
     section[data-testid="stSidebar"] { display: none; }
-    .mono, code { font-family: var(--mono); font-size: 0.92em; }
+    .mono { font-weight: 500; }
+    code { font-family: var(--mono); font-size: 0.92em; letter-spacing: 0; }
     .stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button,
     .stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stCaptionContainer"] {
         font-family: var(--sans);
+        letter-spacing: var(--track);
     }
 
     /* ── Document header ─────────────────────────────────────── */
@@ -121,38 +129,39 @@ st.markdown(
         border-bottom: 2px solid var(--ink);
         padding: 4px 0 10px 0; margin-bottom: 18px;
     }
-    .rpt-header .org { font-size: 0.82rem; font-weight: 600; color: var(--accent); }
+    .rpt-header .org { font-size: 0.86rem; font-weight: 600; color: var(--accent); }
     .rpt-header h1 {
-        margin: 2px 0 0 0; padding: 0; font-size: 1.5rem; font-weight: 600;
-        color: var(--ink); line-height: 1.2; letter-spacing: -0.02em;
+        margin: 2px 0 0 0; padding: 0; font-size: 1.75rem; font-weight: 600;
+        color: var(--ink); line-height: 1.15; letter-spacing: var(--track-display);
         font-family: var(--sans);
     }
-    .rpt-header .sub { font-size: 0.88rem; color: var(--muted); margin-top: 2px; }
-    .rpt-header .meta { font-size: 0.76rem; color: var(--muted); text-align: right; line-height: 1.5; }
+    .rpt-header .sub { font-size: 0.95rem; color: var(--muted); margin-top: 3px; }
+    .rpt-header .meta { font-size: 0.8rem; color: var(--muted); text-align: right; line-height: 1.5; }
 
     /* ── Report headings ─────────────────────────────────────── */
     .rpt-h2 {
-        font-size: 1.05rem; font-weight: 600; color: var(--ink); letter-spacing: -0.01em;
-        margin: 26px 0 8px 0; padding-bottom: 4px;
+        font-size: 1.2rem; font-weight: 600; color: var(--ink);
+        letter-spacing: var(--track-display);
+        margin: 28px 0 8px 0; padding-bottom: 5px;
         border-bottom: 1px solid var(--ink);
     }
     .rpt-h2 .n {
         font-weight: 500; font-variant-numeric: tabular-nums;
         color: var(--muted); margin-right: 12px;
     }
-    .rpt-h3 { font-size: 0.9rem; font-weight: 600; color: var(--ink); margin: 18px 0 6px 0; }
-    .field-label { font-size: 0.85rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
-    .field-sublabel { font-size: 0.78rem; color: var(--muted); margin: 4px 0 -4px 0; }
-    .muted { color: var(--muted); font-size: 0.84rem; }
+    .rpt-h3 { font-size: 1rem; font-weight: 600; color: var(--ink); margin: 20px 0 6px 0; }
+    .field-label { font-size: 0.92rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+    .field-sublabel { font-size: 0.82rem; color: var(--muted); margin: 4px 0 -4px 0; }
+    .muted { color: var(--muted); font-size: 0.88rem; }
 
     /* ── Tables ──────────────────────────────────────────────── */
     table.rpt {
         border-collapse: collapse; width: 100%; margin: 4px 0 12px 0;
-        font-size: 0.84rem; border: none;
+        font-size: 0.9rem; border: none;
     }
     table.rpt th, table.rpt td {
         border: none; border-bottom: 1px solid var(--rule-light);
-        padding: 6px 14px 6px 0; text-align: left; vertical-align: top;
+        padding: 7px 14px 7px 0; text-align: left; vertical-align: top;
         background: transparent; color: var(--ink);
     }
     table.rpt th { font-weight: 600; border-bottom: 1px solid var(--ink); white-space: nowrap; }
@@ -161,17 +170,15 @@ st.markdown(
         text-align: right;
         font-variant-numeric: tabular-nums; white-space: nowrap;
     }
-    table.rpt .code {
-        font-family: var(--mono); font-size: 0.76rem; white-space: nowrap;
-    }
-    table.rpt th.num, table.rpt th.code { font-family: inherit; font-size: inherit; }
+    table.rpt .code { font-weight: 500; white-space: nowrap; }
+    table.rpt th.num, table.rpt th.code { font-weight: 600; }
     table.rpt tr, table.rpt thead { border: none !important; background: transparent !important; }
-    table.rpt .detail { color: var(--muted); font-size: 0.79rem; margin-top: 3px; line-height: 1.45; }
-    table.kv th { border-bottom: none; color: var(--muted); font-weight: 500; font-size: 0.78rem; padding-bottom: 0; }
-    table.kv td { border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; font-size: 0.95rem; font-weight: 500; }
+    table.rpt .detail { color: var(--muted); font-size: 0.83rem; margin-top: 3px; line-height: 1.45; }
+    table.kv th { border-bottom: none; color: var(--muted); font-weight: 500; font-size: 0.82rem; padding-bottom: 0; }
+    table.kv td { border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; font-size: 1.05rem; font-weight: 500; }
 
     /* ── Severity labels: text + square marker, no pills ──────── */
-    .sev { white-space: nowrap; font-weight: 600; font-size: 0.8rem; }
+    .sev { white-space: nowrap; font-weight: 600; font-size: 0.86rem; }
     .sev::before {
         content: ""; display: inline-block; width: 7px; height: 7px;
         margin-right: 7px; vertical-align: 1px; background: currentColor;
@@ -183,28 +190,28 @@ st.markdown(
     .sev-commercial { color: var(--sev-commercial); }
     .sev-technical  { color: var(--sev-technical); }
     .sev-special_handling, .sev-none { color: var(--sev-other); }
-    .status-line { font-size: 0.95rem; margin: 4px 0 8px 0; }
-    .status-line .sev { font-size: 1rem; letter-spacing: 0.3px; }
+    .status-line { font-size: 1rem; margin: 4px 0 8px 0; }
+    .status-line .sev { font-size: 1.05rem; letter-spacing: 0.2px; }
 
     /* ── Notes (replaces coloured callout cards) ─────────────── */
     .note {
         border-left: 2px solid var(--rule); padding: 1px 0 1px 12px;
-        margin: 8px 0; font-size: 0.85rem; line-height: 1.55; color: var(--ink);
+        margin: 8px 0; font-size: 0.92rem; line-height: 1.55; color: var(--ink);
     }
     .note-critical { border-left-color: var(--sev-critical); }
     .note-warning  { border-left-color: var(--sev-warning); }
     .note-info     { border-left-color: var(--sev-info); }
     .note-ok       { border-left-color: var(--sev-ok); }
-    .note .detail  { color: var(--muted); font-size: 0.8rem; }
+    .note .detail  { color: var(--muted); font-size: 0.85rem; }
 
-    ol.rpt-list, ul.rpt-list { margin: 4px 0 8px 0; padding-left: 22px; font-size: 0.88rem; }
-    ol.rpt-list li, ul.rpt-list li { margin: 2px 0; }
+    ol.rpt-list, ul.rpt-list { margin: 4px 0 8px 0; padding-left: 22px; font-size: 0.94rem; }
+    ol.rpt-list li, ul.rpt-list li { margin: 3px 0; }
 
     /* ── Email draft ─────────────────────────────────────────── */
     .email-box {
         background: #FFFFFF; border: 1px solid var(--rule); border-radius: 2px;
-        padding: 20px 24px; font-size: 0.88rem; white-space: pre-wrap;
-        line-height: 1.7; color: var(--ink) !important;
+        padding: 22px 26px; font-size: 0.97rem; white-space: pre-wrap;
+        line-height: 1.65; color: var(--ink) !important;
     }
 
     /* ── Inputs ──────────────────────────────────────────────── */
@@ -215,22 +222,22 @@ st.markdown(
     .st-key-run_btn button { width: 100%; }
     div[data-testid="stButton"] > button {
         min-width: 180px; background: var(--accent); color: #FFFFFF !important;
-        font-weight: 600; font-size: 0.92rem; padding: 9px 12px;
+        font-weight: 600; font-size: 0.97rem; padding: 9px 12px;
         border: 1px solid var(--accent); border-radius: 2px; cursor: pointer;
     }
     div[data-testid="stButton"] > button:hover  { background: #173B5C; border-color: #173B5C; }
     div[data-testid="stButton"] > button:active { background: #112C45; }
     [data-testid="stDownloadButton"] > button {
         background: #FFFFFF !important; border: 1px solid #8A8A8A !important;
-        color: var(--ink) !important; font-size: 0.85rem !important;
+        color: var(--ink) !important; font-size: 0.9rem !important;
         font-weight: 500 !important; border-radius: 2px !important; cursor: pointer !important;
     }
     [data-testid="stDownloadButton"] > button:hover { background: var(--tint) !important; }
 
     /* ── Tabs ────────────────────────────────────────────────── */
     button[data-baseweb="tab"] {
-        font-size: 0.9rem !important; font-weight: 500 !important;
-        padding: 8px 2px !important; margin-right: 26px !important; color: var(--muted) !important;
+        font-size: 0.97rem !important; font-weight: 500 !important;
+        padding: 8px 2px !important; margin-right: 28px !important; color: var(--muted) !important;
     }
     button[data-baseweb="tab"][aria-selected="true"] { font-weight: 600 !important; color: var(--ink) !important; }
     div[data-baseweb="tab-highlight"] { background-color: var(--ink) !important; height: 2px !important; }
@@ -240,14 +247,14 @@ st.markdown(
     [data-testid="stExpander"] details { border-radius: 2px !important; }
 
     /* ── Run progress (thin bar instead of spinner ring) ─────── */
-    .prog { margin: 10px 0 18px 0; font-size: 0.85rem; color: var(--muted); }
+    .prog { margin: 10px 0 18px 0; font-size: 0.9rem; color: var(--muted); }
     .prog-bar { height: 3px; background: var(--rule-light); margin-top: 6px; }
     .prog-bar > div { height: 3px; background: var(--accent); }
 
-    .empty-state { color: var(--muted); padding: 22px 0 30px 0; font-size: 0.88rem; }
+    .empty-state { color: var(--muted); padding: 22px 0 30px 0; font-size: 0.94rem; }
 
     .rpt-footer {
-        font-size: 0.74rem; color: var(--muted); margin-top: 40px; padding-top: 10px;
+        font-size: 0.8rem; color: var(--muted); margin-top: 40px; padding-top: 10px;
         border-top: 1px solid var(--rule);
     }
 
@@ -1469,7 +1476,7 @@ with inp_d:
         height=110,
         placeholder=(
             "Target <70 ng/L PFOA+PFOS per EPA MCL.\n"
-            "Drinking water. Flow 2 MGD. Customer: Veolia France."
+            "Drinking water. Flow 2 MGD. Customer: Acme Water, France."
         ),
         help=(
             "Treatment objectives, regulatory targets, flow rate, site context. "
