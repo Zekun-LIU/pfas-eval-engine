@@ -1731,7 +1731,7 @@ with tab_email:
             _name_col, _ = st.columns([1, 3])
             with _name_col:
                 _recipient = st.text_input(
-                    "Recipient first name", key="email_recipient", placeholder="e.g. Mitch"
+                    "Recipient first name", key="email_recipient", placeholder="e.g. Alex"
                 )
             chosen_email = fill_recipient(
                 _written_once(
