@@ -84,6 +84,8 @@ class ReadDocument:
     problems: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
     is_correspondence: bool = False
+    # Tables or pictures taken from a file that was attached as notes or context
+    is_context: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -119,7 +121,7 @@ def split_context_documents(docs: Iterable[ReadDocument]) -> Tuple[str, List[Rea
                 name=doc.name, fmt=doc.fmt, kind=KIND_DOCUMENT,
                 text=_tables_to_text(doc.tables),
                 tables=doc.tables, images=doc.images,
-                problems=doc.problems, notes=doc.notes,
+                problems=doc.problems, notes=doc.notes, is_context=True,
             ))
     return "\n\n".join(texts), lab_docs
 
@@ -345,8 +347,20 @@ def _read_pdf(data: bytes, name: str) -> ReadDocument:
             if _page_needs_vision(page, text):
                 vision_pages.append(i)
                 pages_text.append(f"[Page {i + 1}: scanned image, see attached image]")
-            elif text.strip():
-                pages_text.append(f"[Page {i + 1}]\n{text}")
+                continue
+            if not text.strip():
+                continue
+            block = f"[Page {i + 1}]\n{text}"
+            # Plain text loses which column a number sits in (Min, Avg or Max),
+            # so ruled tables are also kept cell by cell.
+            for number, frame in enumerate(_ruled_tables(page), 1):
+                title = f"Page {i + 1} table {number}"
+                doc.tables[title] = frame
+                block += (
+                    f"\n\n[{title}, the same content cell by cell; "
+                    f"use this for column positions]\n{_frame_to_text(frame)}"
+                )
+            pages_text.append(block)
     if total > _MAX_PDF_PAGES:
         doc.problems.append(
             f"'{name}' has {total} pages; only the first {_MAX_PDF_PAGES} were read."
@@ -367,6 +381,40 @@ def _read_pdf(data: bytes, name: str) -> ReadDocument:
     if not doc.text.strip() and not doc.images:
         doc.problems.append(f"'{name}' has no readable content.")
     return doc
+
+
+def _ruled_tables(page) -> List[pd.DataFrame]:
+    try:
+        grids = page.extract_tables()
+    except Exception:
+        return []
+    frames = [_grid_to_frame(grid) for grid in grids]
+    return [f for f in frames if f is not None]
+
+
+def _grid_to_frame(grid: List[List[Optional[str]]]) -> Optional[pd.DataFrame]:
+    """
+    pdfplumber splits one visual column into several when cell borders do not
+    line up, so a value can land one sub-column left or right of its header.
+    Adjacent sub-columns that are never filled in the same row are one column.
+    """
+    rows = [[(c or "").replace("\n", " ").strip() for c in row] for row in grid]
+    width = max((len(r) for r in rows), default=0)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    groups: List[List[int]] = []
+    for ci in range(width):
+        filled = [ri for ri, r in enumerate(rows) if r[ci]]
+        if not filled:
+            continue
+        if groups and not any(rows[ri][cj] for ri in filled for cj in groups[-1]):
+            groups[-1].append(ci)
+        else:
+            groups.append([ci])
+    merged = [[next((r[cj] for cj in g if r[cj]), "") for g in groups] for r in rows]
+    merged = [r for r in merged if any(r)]
+    if len(groups) < 2 or len(merged) < 2:
+        return None
+    return pd.DataFrame(merged, dtype=str)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

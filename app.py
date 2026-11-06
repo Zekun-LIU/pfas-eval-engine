@@ -40,7 +40,9 @@ from engine import (
     TOF_COVERAGE_THRESHOLD,
 )
 from file_readers import ACCEPTED_FORMATS_LABEL, read_upload, split_context_documents
-from parser import ParsedData, parse_all
+from parser import (
+    ParsedData, describe_flow, design_flow_gpm, parse_all, sample_matrices, screening_matrix,
+)
 from utils import (
     CATEGORY_LABELS,
     format_conc_auto,
@@ -92,7 +94,10 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
     if result.samples:
         worst = max(
             result.samples,
-            key=lambda sr: {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
+            key=lambda sr: (
+                {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
+                sr.module1.total_conc_mg_L,
+            ),
         )
     if worst and worst.module1.total_conc_mg_L > 0:
         m1 = worst.module1
@@ -123,6 +128,20 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
             for s in avg_m1.species[:4]:
                 if s.detected:
                     lines.append(f"  {s.name}: {format_conc_auto(s.conc_mg_L)}")
+
+    if result.comparison is not None:
+        lines.append("\nSAMPLE COMPARISON AND BASIS OF DESIGN:")
+        if result.comparison.legend:
+            lines.append(f"  Sample labels: {result.comparison.legend}")
+        for text in (result.comparison.headline, *result.comparison.findings,
+                     *result.comparison.design_notes):
+            lines.append(f"  - {text}")
+    flows = {n: f for n, f in result.sample_flow.items() if describe_flow(f)}
+    if flows:
+        lines.append("\nFLOW BY SAMPLE:")
+        for name, flow in flows.items():
+            hours = f", {flow['hours_avg']:g} h/day" if flow.get("hours_avg") is not None else ""
+            lines.append(f"  {name}: {describe_flow(flow)}{hours}")
 
     # Key flags — include all severities for the model to reason over
     lines.append("\nKEY FLAGS:")
@@ -178,6 +197,9 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
         "it clearly: analytical capability must be confirmed before testing, and the "
         "treatability timeline extends 2–3 weeks for contamination control.\n"
         "- If throughput >100 GPM, call out the large-scale flag explicitly.\n"
+        "- If a SAMPLE COMPARISON is present, say whether the samples are uniform, give the "
+        "max/min spread in total PFAS and the largest single differences, and state what that "
+        "means for the basis of design. Report flow per sample when it is given per sample.\n"
         "- Do not use em dashes; use commas, colons, semicolons or full stops instead.\n"
         "- Return ONLY the email text: no markdown fencing, no preamble."
     )
@@ -197,7 +219,7 @@ def _generate_llm_email(result: EvaluationResult, project_context: dict, api_key
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     :root {
         --ink: #1B1B1B;
@@ -213,16 +235,27 @@ st.markdown(
         --sev-commercial: #5B3A8C;
         --sev-technical: #8F5200;
         --sev-other: #555555;
+        /* SF Pro on Apple devices; Inter, its closest open relative, everywhere else */
+        --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI",
+                "Helvetica Neue", Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
     }
 
     html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        font-feature-settings: "cv11", "ss03";
         color: var(--ink);
         line-height: 1.5;
     }
     .block-container { padding-top: 3.4rem; padding-bottom: 2.5rem; max-width: 1180px; }
     section[data-testid="stSidebar"] { display: none; }
-    .mono, code { font-family: 'IBM Plex Mono', Consolas, monospace; }
+    .mono, code { font-family: var(--mono); font-size: 0.92em; }
+    .stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp textarea, .stApp button,
+    .stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stCaptionContainer"] {
+        font-family: var(--sans);
+    }
 
     /* ── Document header ─────────────────────────────────────── */
     .rpt-header {
@@ -233,20 +266,21 @@ st.markdown(
     }
     .rpt-header .org { font-size: 0.82rem; font-weight: 600; color: var(--accent); }
     .rpt-header h1 {
-        margin: 2px 0 0 0; padding: 0; font-size: 1.45rem; font-weight: 600;
-        color: var(--ink); line-height: 1.25;
+        margin: 2px 0 0 0; padding: 0; font-size: 1.5rem; font-weight: 600;
+        color: var(--ink); line-height: 1.2; letter-spacing: -0.02em;
+        font-family: var(--sans);
     }
     .rpt-header .sub { font-size: 0.88rem; color: var(--muted); margin-top: 2px; }
     .rpt-header .meta { font-size: 0.76rem; color: var(--muted); text-align: right; line-height: 1.5; }
 
     /* ── Report headings ─────────────────────────────────────── */
     .rpt-h2 {
-        font-size: 1.02rem; font-weight: 600; color: var(--ink);
+        font-size: 1.05rem; font-weight: 600; color: var(--ink); letter-spacing: -0.01em;
         margin: 26px 0 8px 0; padding-bottom: 4px;
         border-bottom: 1px solid var(--ink);
     }
     .rpt-h2 .n {
-        font-family: 'IBM Plex Mono', Consolas, monospace; font-weight: 500;
+        font-weight: 500; font-variant-numeric: tabular-nums;
         color: var(--muted); margin-right: 12px;
     }
     .rpt-h3 { font-size: 0.9rem; font-weight: 600; color: var(--ink); margin: 18px 0 6px 0; }
@@ -267,17 +301,17 @@ st.markdown(
     table.rpt th { font-weight: 600; border-bottom: 1px solid var(--ink); white-space: nowrap; }
     table.rpt tr:last-child td { border-bottom: 1px solid var(--rule); }
     table.rpt .num {
-        text-align: right; font-family: 'IBM Plex Mono', Consolas, monospace;
+        text-align: right;
         font-variant-numeric: tabular-nums; white-space: nowrap;
     }
     table.rpt .code {
-        font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 0.78rem; white-space: nowrap;
+        font-family: var(--mono); font-size: 0.76rem; white-space: nowrap;
     }
     table.rpt th.num, table.rpt th.code { font-family: inherit; font-size: inherit; }
     table.rpt tr, table.rpt thead { border: none !important; background: transparent !important; }
     table.rpt .detail { color: var(--muted); font-size: 0.79rem; margin-top: 3px; line-height: 1.45; }
     table.kv th { border-bottom: none; color: var(--muted); font-weight: 500; font-size: 0.78rem; padding-bottom: 0; }
-    table.kv td { border-bottom: 1px solid var(--rule); font-family: 'IBM Plex Mono', Consolas, monospace; font-size: 0.92rem; }
+    table.kv td { border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; font-size: 0.95rem; font-weight: 500; }
 
     /* ── Severity labels: text + square marker, no pills ──────── */
     .sev { white-space: nowrap; font-weight: 600; font-size: 0.8rem; }
@@ -716,7 +750,18 @@ _MATRIX_SPEC = {
 }
 
 
-def _render_module3(m3: Module3Result, num: str | None = None) -> None:
+def _sample_labels(samples: list) -> tuple:
+    """Column labels for samples: the names when short, else S1, S2 ... with a legend."""
+    if len(samples) <= 4 and all(len(s) <= 22 for s in samples):
+        return {s: s for s in samples}, ""
+    labels = {s: f"S{i}" for i, s in enumerate(samples, 1)}
+    legend = "; ".join(f"<strong>{labels[s]}</strong> = {html.escape(s)}" for s in samples)
+    return labels, f'<div class="muted" style="margin:4px 0 6px 0;">{legend}</div>'
+
+
+def _render_module3(
+    m3: Module3Result, num: str | None = None, per_sample: dict | None = None
+) -> None:
     """Render Module 3 water matrix screening results."""
     _MATRIX_UNITS = {
         "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
@@ -783,22 +828,53 @@ def _render_module3(m3: Module3Result, num: str | None = None) -> None:
         "magnesium":   "Magnesium (Mg)",
         "boron":       "Boron (B)",
         "selenium":    "Selenium (Se)",
+        "sodium":      "Sodium (Na)",
+        "perchlorate": "Perchlorate (ClO₄⁻)",
+        "ORP":         "ORP",
+        "oil_grease":  "Oil & Grease",
     }
+    _MATRIX_UNITS.update({
+        "sodium": "mg/L", "perchlorate": "mg/L", "ORP": "mV", "oil_grease": "mg/L",
+        # Customers report alkalinity as CaCO₃ or as HCO₃⁻; the value is shown as reported.
+        "alkalinity": "mg/L (as reported)",
+    })
 
     _heading("Water matrix screening (Module 3)", num)
 
+    def _value(v) -> str:
+        return f"{v:.4g}" if isinstance(v, float) and v == v else str(v)
+
+    multi = bool(per_sample) and len(per_sample) > 1
     if m3.detected_params:
+        labels, legend = _sample_labels(list(per_sample)) if multi else ({}, "")
+        if legend:
+            st.markdown(legend, unsafe_allow_html=True)
         rows = []
         for k, v in m3.detected_params.items():
             sev, label = _MATRIX_STATUS.get(_param_traffic_light(k, v), ("none", ""))
-            rows.append({
-                "Parameter": html.escape(_MATRIX_NICE.get(k, k)),
-                "Value": html.escape(f"{v:.4g}" if isinstance(v, float) and v == v else str(v)),
-                "Unit": html.escape(_MATRIX_UNITS.get(k, "")),
-                "Screening": _sev_html(sev, label) if label else '<span class="muted">No threshold</span>',
-                "Spec": _MATRIX_SPEC.get(k, ""),
-            })
-        _html_table(rows, num_cols=("Value",), html_cols=("Parameter", "Value", "Unit", "Screening"))
+            row = {"Parameter": html.escape(_MATRIX_NICE.get(k, k))}
+            if multi:
+                for name, own in per_sample.items():
+                    row[labels[name]] = _value(own[k]) if own.get(k) is not None else "n/r"
+                row["Screened on"] = _value(v)
+            else:
+                row["Value"] = _value(v)
+            row["Unit"] = html.escape(_MATRIX_UNITS.get(k, ""))
+            row["Screening"] = (
+                _sev_html(sev, label) if label else '<span class="muted">No threshold</span>'
+            )
+            row["Spec"] = _MATRIX_SPEC.get(k, "")
+            rows.append(row)
+        _html_table(
+            rows,
+            num_cols=tuple(c for c in rows[0] if c not in ("Parameter", "Unit", "Screening", "Spec")),
+            html_cols=("Parameter", "Unit", "Screening"),
+        )
+        if multi:
+            st.caption(
+                "Each parameter is screened on its highest value across the samples. "
+                "n/r = not reported for that sample."
+            )
     else:
         st.markdown(
             '<div class="muted">No water matrix parameters detected. Add them to the notes, '
@@ -845,6 +921,32 @@ def _build_text_report(result: EvaluationResult, parsed: "ParsedData | None" = N
         lines.append("DATA CHECKS (confirm against the source files):")
         lines += [f"  - [{c['level'].upper()}] {c['message']}" for c in parsed.data_checks]
         lines.append("")
+
+    if result.comparison is not None:
+        comparison = result.comparison
+        lines += ["SAMPLE COMPARISON AND BASIS OF DESIGN:", f"  {comparison.headline}", ""]
+        short = {name: f"S{i}" for i, name in enumerate(comparison.samples, 1)}
+        if comparison.legend:
+            short = comparison.labels
+        lines += [f"  {short[name]} = {name}" for name in comparison.samples if short[name] != name]
+        lines.append("")
+        lines.append(f"  {'Parameter':<30}{'Unit':<8}" + "".join(f"{short[n][:11]:>12}" for n in comparison.samples) + f"{'Max/Min':>10}")
+        for r in comparison.rows:
+            cells = "".join(f"{(r.values.get(n) or 'n/r'):>12}" for n in comparison.samples)
+            ratio = f"{r.ratio:.1f}x" if r.ratio is not None else ""
+            lines.append(f"  {r.label[:29]:<30}{r.unit:<8}{cells}{ratio:>10}")
+        lines.append("")
+        lines += [f"  - {t}" for t in comparison.findings]
+        lines += [f"  - {t}" for t in comparison.design_notes]
+        lines.append("")
+    flow_lines = [
+        f"  - {name}: {describe_flow(flow)}"
+        + (f"; design {design_flow_gpm(flow):,.0f} GPM" if design_flow_gpm(flow) is not None else "")
+        + (f"; {flow['hours_avg']:g} h/day" if flow.get("hours_avg") is not None else "")
+        for name, flow in result.sample_flow.items()
+    ]
+    if flow_lines:
+        lines += ["FLOW AND OPERATION:", *flow_lines, ""]
 
     if getattr(result, "analytical_flag", None):
         af = result.analytical_flag
@@ -935,6 +1037,84 @@ def _build_text_report(result: EvaluationResult, parsed: "ParsedData | None" = N
     return "\n".join(lines)
 
 
+def _render_comparison(comparison) -> None:
+    """How far apart the samples are, and what that means for the basis of design."""
+    severity = {
+        "uniform": "ok", "moderately variable": "warning", "non-uniform": "warning",
+    }.get(comparison.uniformity, "info")
+    _note(f"<strong>{html.escape(comparison.headline)}</strong>", severity)
+
+    labels = comparison.labels
+    if comparison.legend:
+        st.markdown(
+            f'<div class="muted" style="margin:4px 0 6px 0;">{html.escape(comparison.legend)}</div>',
+            unsafe_allow_html=True,
+        )
+    many = len(comparison.samples) > 6
+    for group in ("PFAS", "Water matrix", "Flow and operation"):
+        group_rows = [r for r in comparison.rows if r.group == group]
+        if not group_rows:
+            continue
+        _subheading(group)
+        table = []
+        for r in group_rows:
+            row = {"Parameter": r.label, "Unit": r.unit}
+            if many:
+                row.update({
+                    "Lowest": r.low, "Highest": r.high,
+                    "Highest in": labels.get(r.high_sample, ""),
+                })
+            else:
+                row.update({labels[name]: r.values.get(name) or "n/r" for name in comparison.samples})
+            row["Max / Min"] = f"{r.ratio:.1f}×" if r.ratio is not None else ""
+            table.append(row)
+        _html_table(
+            table,
+            num_cols=tuple(c for c in table[0] if c not in ("Parameter", "Unit", "Highest in")),
+        )
+    st.caption(
+        "n/r = not reported, ND = not detected. Max / Min is the highest value divided by "
+        "the lowest among the samples that report a number."
+    )
+
+    _subheading("Findings")
+    st.markdown(
+        '<ul class="rpt-list">' + "".join(f"<li>{html.escape(t)}</li>" for t in comparison.findings) + "</ul>",
+        unsafe_allow_html=True,
+    )
+    _subheading("Basis of design")
+    st.markdown(
+        '<ul class="rpt-list">' + "".join(f"<li>{html.escape(t)}</li>" for t in comparison.design_notes) + "</ul>",
+        unsafe_allow_html=True,
+    )
+
+
+def _flow_rows(sample_flow: dict) -> list:
+    def number(value) -> str:
+        return f"{value:,.4g}" if value is not None else ""
+
+    rows = []
+    for name, flow in sample_flow.items():
+        design = design_flow_gpm(flow)
+        hours = flow.get("hours_avg")
+        span = [flow.get("hours_min"), flow.get("hours_max")]
+        hours_text = number(hours)
+        if span[0] is not None and span[1] is not None:
+            hours_text = f"{number(span[0])} to {number(span[1])}" + (f" (avg {number(hours)})" if hours is not None else "")
+        volume = flow.get("daily_volume")
+        rows.append({
+            "Sample": name,
+            "Flow min": number(flow.get("min")),
+            "Flow avg": number(flow.get("avg")),
+            "Flow max": number(flow.get("max")),
+            "Unit": flow.get("unit", ""),
+            "Design flow (GPM)": f"{design:,.0f}" if design is not None else "",
+            "Hours per day": hours_text,
+            "Daily volume": f"{number(volume)} {flow.get('daily_volume_unit', '')}".strip() if volume is not None else "",
+        })
+    return rows
+
+
 def _render_data_intake(parsed: "ParsedData") -> None:
     """What was read from each file, and every value a person should check by eye."""
     if parsed.source_files:
@@ -999,7 +1179,7 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
             "info" if vf.severity == "info" else "warning",
             detail=vf.detail or "",
         )
-    elif result.variability_ratio is not None:
+    elif result.variability_ratio is not None and result.comparison is None:
         st.caption(
             f"Multi-sample variability ratio: {result.variability_ratio:.1f} (within acceptable range)"
         )
@@ -1009,32 +1189,44 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         _heading("Source files and data checks", str(next(sec)))
         _render_data_intake(parsed)
 
+    # ── Several samples: how uniform they are ─────────────────────────────────
+    if result.comparison is not None:
+        _heading("Sample comparison and basis of design", str(next(sec)))
+        _render_comparison(result.comparison)
+
     # ── Analytical feasibility (AN-1) ─────────────────────────────────────────
     if getattr(result, "analytical_flag", None):
         _heading("Analytical feasibility", str(next(sec)))
         _flags_table([result.analytical_flag])
 
-    # ── Project context ───────────────────────────────────────────────────────
-    if parsed and parsed.llm_project_context:
-        ctx = parsed.llm_project_context
-        pairs: list[tuple[str, str]] = []
-        for key, label in (("customer_name", "Customer"), ("site_name", "Site"), ("country", "Country")):
-            if ctx.get(key):
-                pairs.append((label, str(ctx[key])))
-        gpm = ctx.get("throughput_gpm")
-        if ctx.get("flow_rate_display"):
-            pairs.append(("Throughput", ctx["flow_rate_display"] + (f" ({gpm:.0f} GPM)" if gpm else "")))
-        elif gpm:
-            pairs.append(("Throughput", f"{gpm:.0f} GPM"))
+    # ── Project context and flow ──────────────────────────────────────────────
+    ctx = parsed.llm_project_context if parsed else {}
+    pairs: list[tuple[str, str]] = []
+    for key, label in (("customer_name", "Customer"), ("site_name", "Site"), ("country", "Country")):
+        if ctx.get(key):
+            pairs.append((label, str(ctx[key])))
+    gpm = ctx.get("throughput_gpm")
+    if ctx.get("flow_rate_display"):
+        pairs.append(("Project flow", ctx["flow_rate_display"] + (f" ({gpm:.0f} GPM)" if gpm else "")))
+    elif gpm:
+        pairs.append(("Project flow", f"{gpm:.0f} GPM"))
+    flow_rows = _flow_rows(result.sample_flow)
+    if pairs or flow_rows:
+        _heading("Project context and flow", str(next(sec)))
         if pairs:
-            _heading("Project context", str(next(sec)))
             _html_table([{"Item": k, "Value": v} for k, v in pairs])
-            if gpm and float(gpm) > 100:
-                _note(
-                    f"<strong>Large-scale application.</strong> {float(gpm):.0f} GPM exceeds the "
-                    "100 GPM threshold. Full commercial and engineering review is required before quoting.",
-                    "warning",
-                )
+        if flow_rows:
+            _html_table(
+                flow_rows,
+                num_cols=("Flow min", "Flow avg", "Flow max", "Design flow (GPM)"),
+            )
+            st.caption("Design flow is the maximum where one is reported, otherwise the average.")
+        if gpm and float(gpm) > 100:
+            _note(
+                f"<strong>Large-scale application.</strong> {float(gpm):.0f} GPM exceeds the "
+                "100 GPM threshold. Full commercial and engineering review is required before quoting.",
+                "warning",
+            )
 
     # ── Missing information ───────────────────────────────────────────────────
     if result.missing_info:
@@ -1059,7 +1251,10 @@ def _render_technical_output(result: EvaluationResult, parsed: "ParsedData | Non
         )
 
     # ── Water matrix ──────────────────────────────────────────────────────────
-    _render_module3(result.module3, str(next(sec)))
+    _render_module3(
+        result.module3, str(next(sec)),
+        per_sample=sample_matrices(parsed) if parsed else None,
+    )
 
     # ── Treatment guidance ────────────────────────────────────────────────────
     if result.treatment_summary:
@@ -1158,10 +1353,14 @@ def _render_debug_logs(result: EvaluationResult, parsed: ParsedData | None) -> N
             for e in parsed.errors:
                 st.error(e)
 
-        if parsed.matrix_params:
-            st.markdown("**Detected Matrix Parameters:**")
+        _screened, _origin = screening_matrix(parsed)
+        if _screened:
+            st.markdown("**Matrix parameters used for screening:**")
             st.dataframe(
-                pd.DataFrame([{"Parameter": k, "Value": v} for k, v in parsed.matrix_params.items()]),
+                pd.DataFrame([
+                    {"Parameter": k, "Value": v, "From sample": _origin.get(k, "(not tied to a sample)")}
+                    for k, v in _screened.items()
+                ]),
                 hide_index=True,
             )
 

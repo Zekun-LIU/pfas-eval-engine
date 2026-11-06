@@ -85,6 +85,7 @@ PFAS_SPECIES_DB: Dict[str, Dict[str, Any]] = {
     "6+2 PFESA":     {"full_name": "Perfluoro(6-ethoxyethane) sulfonic acid",           "chain": 8,  "group": "ether_sulfonate",     "category": "emerging"},
     "PFMPA":         {"full_name": "Perfluoro-3-methoxypropanoic acid",                 "chain": 4,  "group": "ether_carboxylate",   "category": "emerging"},
     "PFMBA":         {"full_name": "Perfluoro-4-methoxybutanoic acid",                  "chain": 5,  "group": "ether_carboxylate",   "category": "emerging"},
+    "NFDHA":         {"full_name": "Nonafluoro-3,6-dioxaheptanoic acid",                "chain": 5,  "group": "ether_carboxylate",   "category": "emerging"},
     "11Cl-PF3OUdS":  {"full_name": "11-Chloro-1H,2H-perfluoro-1-undecanesulfonate",    "chain": 9,  "group": "chloro_sulfonate",    "category": "emerging"},
     "9Cl-PF3ONS":    {"full_name": "9-Chloro-1H-perfluoro-3,6-dioxanonane-1-sulfonate", "chain": 8, "group": "chloro_sulfonate",    "category": "emerging"},
 }
@@ -169,10 +170,19 @@ PFAS_ALIASES: Dict[str, str] = {
     "PERFLUORO(2-ETHOXYETHANE)SULFONIC ACID":  "2+2 PFESA",
     "PERFLUORO(2-ETHOXYETHANE)SULFONATE":      "2+2 PFESA",
     "2:2 PFESA":                               "2+2 PFESA",
+    "PFEESA":                                  "2+2 PFESA",  # EPA 533 abbreviation, same compound
     "113507-82-7":                             "2+2 PFESA",  # CAS
 
     # HFPO-DA / GenX aliases
     "13252-13-6":                              "HFPO-DA",  # CAS
+
+    # Abbreviation variants seen on customer forms
+    "PFUNA":                                   "PFUnDA",
+    "PFUDA":                                   "PFUnDA",
+    "PFDOA":                                   "PFDoDA",
+    "9CI-PF3ONS":                              "9Cl-PF3ONS",    # capital I typed for lowercase l
+    "11CI-PF3OUDS":                            "11Cl-PF3OUdS",
+    "151772-58-6":                             "NFDHA",          # CAS
 
     # ADONA aliases
     "919005-14-4":                             "ADONA",    # CAS
@@ -331,6 +341,7 @@ _PFAS_TOF_DATA: Dict[str, tuple] = {
     "6+2 PFESA":  (17,  516.1),   # C8HF17O4S
     "PFMPA":      (7,   280.1),   # C4HF7O3
     "PFMBA":      (9,   330.1),   # C5HF9O3
+    "NFDHA":      (9,   296.0),   # C5HF9O4
 }
 
 # Atomic mass of fluorine (g/mol)
@@ -407,6 +418,39 @@ def convert_to_mg_L(value: float, unit: str) -> Optional[float]:
     # Normalised lookup: lowercase, collapse spaces, replace Unicode mu → u
     norm = unit.strip().lower().replace("µ", "u").replace("μ", "u").replace(" ", "")
     factor = _UNIT_NORM.get(norm)
+    if factor is None:
+        # Units written with a qualifier: "ng/L (ppt)", "mg/L as SO4-2", "µg/L (ppb)"
+        base = detect_unit_from_text(unit)
+        factor = _UNIT_NORM.get(base.lower()) if base else None
+    return value * factor if factor is not None else None
+
+
+# ── Flow rate → US gallons per minute ────────────────────────────────────────
+_FLOW_TO_GPM: Dict[str, float] = {
+    "gpm": 1.0, "gal/min": 1.0, "usgpm": 1.0,
+    "gph": 1.0 / 60, "gal/h": 1.0 / 60, "gal/hr": 1.0 / 60,
+    "gpd": 1.0 / 1440, "gal/d": 1.0 / 1440, "gal/day": 1.0 / 1440,
+    "mgd": 694.444,
+    "l/min": 0.264172, "lpm": 0.264172, "l/m": 0.264172,
+    "l/h": 0.004403, "l/hr": 0.004403, "lph": 0.004403,
+    "l/s": 15.8503, "lps": 15.8503,
+    "l/d": 0.264172 / 1440, "l/day": 0.264172 / 1440,
+    "m3/h": 4.40287, "m3/hr": 4.40287,
+    "m3/d": 0.183448, "m3/day": 0.183448,
+    "m3/min": 264.172, "m3/s": 15850.3,
+}
+
+
+def convert_flow_to_gpm(value: float, unit: str) -> Optional[float]:
+    """Convert a flow rate to US GPM. Returns None if the unit is not recognised."""
+    key = (
+        (unit or "").lower().strip()
+        .replace(" ", "").replace("·", "").replace("³", "3")
+        .replace("gallons", "gal").replace("gallon", "gal")
+        .replace("liters", "l").replace("litres", "l").replace("liter", "l").replace("litre", "l")
+        .replace("hour", "h").replace("minute", "min").replace("per", "/")
+    )
+    factor = _FLOW_TO_GPM.get(key)
     return value * factor if factor is not None else None
 
 

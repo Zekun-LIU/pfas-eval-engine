@@ -35,7 +35,9 @@ from utils import (
     is_short_telomer,
     normalize_pfas_name,
 )
-from parser import ParsedData, SampleMetadata
+from parser import (
+    ParsedData, SampleMetadata, describe_flow, design_flow_gpm, sample_matrices, screening_matrix,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENGINE THRESHOLDS  (spec-aligned)
@@ -45,6 +47,13 @@ from parser import ParsedData, SampleMetadata
 PRIMARY_SET_TOP_N          = 5      # Top N species always included in Primary Set
 PRIMARY_SET_PCT_THRESHOLD  = 5.0   # Plus all species ≥ this % (secondary extension)
 VARIABILITY_HIGH_THRESHOLD = 10.0  # max/min total PFAS ratio flagged as high variation
+
+# ── Sample comparison (uniformity across samples) ───────────────────────────
+# Defaults, to be confirmed. Uniform needs BOTH conditions; non-uniform needs EITHER.
+UNIFORM_TOTAL_RATIO        = 1.5   # max/min total PFAS at or below this
+UNIFORM_OVERLAP            = 0.85  # composition overlap at or above this
+NONUNIFORM_TOTAL_RATIO     = 3.0   # max/min total PFAS at or above this
+NONUNIFORM_OVERLAP         = 0.60  # composition overlap below this
 
 # ── Module 2 ────────────────────────────────────────────────────────────────
 PFSA_KINETICS_PCT          = 20.0  # R4: PFSA fraction > 20% in Primary Set → TECHNICAL
@@ -146,6 +155,8 @@ class Module3Result:
     missing_required_params: List[str]   # COD/TOC AND nitrate/nitrite
     flags: List[FlagItem]
     status_contribution: str             # "CONDITIONAL" | "PROCEED"
+    # When several samples have their own matrix: which sample supplied each value
+    value_sources: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -185,6 +196,34 @@ class SampleResult:
 
 
 @dataclass
+class ComparisonRow:
+    group: str                 # "PFAS" | "Water matrix" | "Flow and operation"
+    label: str
+    unit: str
+    values: Dict[str, str]     # sample -> formatted value, "ND", or "" when not reported
+    low: str = ""
+    high: str = ""
+    ratio: Optional[float] = None    # highest / lowest
+    high_sample: str = ""
+
+
+@dataclass
+class SampleComparison:
+    """How far apart the samples are, and what that means for the basis of design."""
+    samples: List[str]
+    sources: Dict[str, str]
+    rows: List[ComparisonRow]
+    uniformity: str            # "uniform" | "moderately variable" | "non-uniform" | "not assessed"
+    headline: str
+    findings: List[str]
+    design_notes: List[str]
+    # Short labels (S1, S2 ...) used in the text when sample names are long,
+    # and the line that explains them. Labels equal the names when they are short.
+    labels: Dict[str, str] = field(default_factory=dict)
+    legend: str = ""
+
+
+@dataclass
 class EvaluationResult:
     """Top-level result returned by the engine."""
     samples: List[SampleResult]
@@ -202,6 +241,11 @@ class EvaluationResult:
     tof_results: List[TOFAnalysisResult] = field(default_factory=list)
     # AN-1: ultra-low target / drinking-water analytical feasibility flag
     analytical_flag: Optional[FlagItem] = None
+    # Water matrix screening of each sample on its own values (bench plans use this)
+    sample_module3: Dict[str, Module3Result] = field(default_factory=dict)
+    # Flow and operating pattern per sample (see ParsedData.sample_flow)
+    sample_flow: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    comparison: Optional[SampleComparison] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -669,6 +713,13 @@ _PARAM_NICE = {
     "nickel":       "Nickel (Ni)",
     "chromium":     "Chromium (Cr)",
     "lead":         "Lead (Pb)",
+    "calcium":      "Calcium (Ca)",
+    "magnesium":    "Magnesium (Mg)",
+    "sodium":       "Sodium (Na)",
+    "alkalinity":   "Total Alkalinity",
+    "perchlorate":  "Perchlorate (ClO₄⁻)",
+    "ORP":          "ORP",
+    "oil_grease":   "Oil & Grease",
 }
 _PARAM_UNITS = {
     "COD": "mg/L", "TOC": "mg/L", "DOC": "mg/L",
@@ -683,6 +734,7 @@ _PARAM_UNITS = {
     "iron": "mg/L", "manganese": "mg/L", "copper": "mg/L",
     "zinc": "mg/L", "aluminum": "mg/L", "nickel": "mg/L",
     "chromium": "mg/L", "lead": "mg/L",
+    "conductivity": "mS/cm", "ORP": "mV", "alkalinity": "mg/L",
 }
 
 
@@ -1162,6 +1214,258 @@ def _compute_variability(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SAMPLE COMPARISON  (uniformity across samples, basis of design)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Parameters with a screening rule in Module 3; their differences are listed first.
+_SCREENED_PARAMS = frozenset({
+    "COD", "TOC", "DOC", "nitrate", "NO2", "ammonia", "TKN", "TP", "chloride", "fluoride",
+    "hardness", "iron", "manganese", "copper", "zinc", "aluminum", "nickel", "chromium", "lead",
+})
+
+
+def _composition_overlap(a: Module1Result, b: Module1Result) -> float:
+    """Share of the PFAS composition two samples have in common, 0 to 1."""
+    def fractions(m1: Module1Result) -> Dict[str, float]:
+        if m1.total_conc_mg_L <= 0:
+            return {}
+        return {s.name: s.conc_mg_L / m1.total_conc_mg_L for s in m1.species if s.conc_mg_L > 0}
+
+    fa, fb = fractions(a), fractions(b)
+    return sum(min(fa.get(name, 0.0), fb.get(name, 0.0)) for name in set(fa) | set(fb))
+
+
+def _concentration_unit(highest_mg_L: float) -> Tuple[str, float]:
+    if highest_mg_L * 1e6 < 1000:
+        return "ng/L", 1e6
+    if highest_mg_L * 1e3 < 1000:
+        return "µg/L", 1e3
+    return "mg/L", 1.0
+
+
+def _spread(
+    group: str, label: str, unit: str, values: Dict[str, float], text: Dict[str, str],
+    samples: List[str], number_format: str = "{:,.4g}",
+) -> ComparisonRow:
+    """One comparison row. `values` holds the numbers, `text` any non-numeric cells."""
+    cells = {
+        name: number_format.format(values[name]) if name in values else text.get(name, "")
+        for name in samples
+    }
+    row = ComparisonRow(group=group, label=label, unit=unit, values=cells)
+    if values:
+        low_name = min(values, key=values.get)
+        high_name = max(values, key=values.get)
+        row.low = number_format.format(values[low_name])
+        row.high = number_format.format(values[high_name])
+        row.high_sample = high_name
+        if len(values) > 1 and values[low_name] > 0:
+            row.ratio = values[high_name] / values[low_name]
+    return row
+
+
+def _compare_samples(
+    sample_results: List[SampleResult], parsed: ParsedData
+) -> Optional[SampleComparison]:
+    """
+    Compare the samples of one evaluation: how far apart they are in PFAS level,
+    PFAS composition, water matrix and flow, and what that means for the basis
+    of design. Returns None when there is only one sample.
+    """
+    pfas = [sr for sr in sample_results if sr.module1.total_conc_mg_L > 0]
+    samples = [sr.sample_name for sr in pfas]
+    samples += [n for n in list(parsed.sample_matrix) + list(parsed.sample_flow) if n not in samples]
+    if len(samples) < 2:
+        return None
+
+    if len(samples) <= 4 and all(len(n) <= 22 for n in samples):
+        labels = {n: n for n in samples}
+        legend = ""
+    else:
+        labels = {n: f"S{i}" for i, n in enumerate(samples, 1)}
+        legend = "; ".join(f"{labels[n]} = {n}" for n in samples)
+
+    def tag(name: str) -> str:
+        return labels[name] if labels[name] != name else f"'{name}'"
+
+    rows: List[ComparisonRow] = []
+    findings: List[str] = []
+
+    # ── PFAS level ────────────────────────────────────────────────────────────
+    total_ratio: Optional[float] = None
+    if len(pfas) > 1:
+        totals = {sr.sample_name: sr.module1.total_conc_mg_L for sr in pfas}
+        unit, factor = _concentration_unit(max(totals.values()))
+        row = _spread("PFAS", "Total PFAS", unit, {k: v * factor for k, v in totals.items()}, {}, samples)
+        rows.append(row)
+        total_ratio = row.ratio
+        findings.append(
+            f"Total PFAS ranges from {row.low} to {row.high} {unit} "
+            f"({row.ratio:.1f}× apart; highest in {tag(row.high_sample)})."
+        )
+
+        species: Dict[str, Dict[str, float]] = {}
+        for sr in pfas:
+            for entry in sr.module1.species:
+                if entry.conc_mg_L > 0:
+                    species.setdefault(entry.name, {})[sr.sample_name] = entry.conc_mg_L
+        major = {
+            entry.name for sr in pfas for entry in sr.module1.species
+            if entry.percentage >= PRIMARY_SET_PCT_THRESHOLD
+        }
+        spreads: List[Tuple[float, str]] = []
+        partial: List[str] = []
+        for name in sorted(species, key=lambda n: -max(species[n].values())):
+            unit, factor = _concentration_unit(max(species[name].values()))
+            text = {
+                s: "ND" for s in samples
+                if s not in species[name] and name in parsed.nd_species.get(s, [])
+            }
+            row = _spread("PFAS", name, unit, {k: v * factor for k, v in species[name].items()}, text, samples)
+            rows.append(row)
+            if name not in major:
+                continue
+            if row.ratio is not None and row.ratio >= 2:
+                spreads.append((row.ratio, f"{name} {row.low} to {row.high} {unit} ({row.ratio:.0f}×)"))
+            absent = [s for s in (sr.sample_name for sr in pfas) if s not in species[name]]
+            if absent:
+                partial.append(f"{name} ({len(pfas) - len(absent)} of {len(pfas)} samples)")
+        if spreads:
+            findings.append(
+                "Largest differences in single species: "
+                + "; ".join(text for _, text in sorted(spreads, reverse=True)[:3]) + "."
+            )
+        if partial:
+            findings.append("Major species found in only some samples: " + ", ".join(partial[:5]) + ".")
+
+    # ── PFAS composition ──────────────────────────────────────────────────────
+    overlap: Optional[float] = None
+    if len(pfas) > 1:
+        overlap = min(
+            _composition_overlap(a.module1, b.module1)
+            for i, a in enumerate(pfas) for b in pfas[i + 1:]
+        )
+        dominant = "; ".join(
+            f"{tag(sr.sample_name)}: {sr.module1.species[0].name} {sr.module1.species[0].percentage:.0f}%"
+            for sr in pfas[:6] if sr.module1.species
+        )
+        findings.append(
+            f"PFAS composition overlap between samples is {overlap * 100:.0f}% "
+            f"(lowest pair). Dominant species: {dominant}."
+        )
+
+    # ── Water matrix ──────────────────────────────────────────────────────────
+    params: List[str] = []
+    for own in parsed.sample_matrix.values():
+        params += [k for k in own if k not in params]
+    matrix_spreads: List[Tuple[float, str]] = []
+    gaps: List[str] = []
+    with_matrix = [s for s in samples if s in parsed.sample_matrix]
+    for key in params:
+        numbers: Dict[str, float] = {}
+        text: Dict[str, str] = {}
+        for name in with_matrix:
+            value = parsed.sample_matrix[name].get(key)
+            if value is None:
+                continue
+            try:
+                numbers[name] = float(value)
+            except (TypeError, ValueError):
+                text[name] = str(value)
+        unit = _PARAM_UNITS.get(key, "mg/L")
+        row = _spread("Water matrix", _PARAM_NICE.get(key, key), unit, numbers, text, samples)
+        rows.append(row)
+        if row.ratio is not None and row.ratio >= 2:
+            matrix_spreads.append((
+                (key in _SCREENED_PARAMS, row.ratio),
+                f"{_PARAM_NICE.get(key, key)} {row.low} to {row.high} {unit} ({row.ratio:.1f}×)".replace("  ", " "),
+            ))
+        if 0 < len(numbers) + len(text) < len(with_matrix):
+            gaps.append(_PARAM_NICE.get(key, key))
+    if matrix_spreads:
+        findings.append(
+            "Largest water-matrix differences: "
+            + "; ".join(text for _, text in sorted(matrix_spreads, reverse=True)[:5]) + "."
+        )
+    if gaps:
+        findings.append("Reported for only some samples: " + ", ".join(gaps[:8]) + ".")
+
+    # ── Flow and operation ────────────────────────────────────────────────────
+    flows = {n: f for n, f in parsed.sample_flow.items() if design_flow_gpm(f) is not None}
+    if flows:
+        for kind, label in (("min", "Flow, minimum"), ("avg", "Flow, average"), ("max", "Flow, maximum")):
+            numbers = {n: f[f"{kind}_gpm"] for n, f in flows.items() if f.get(f"{kind}_gpm") is not None}
+            if numbers:
+                rows.append(_spread("Flow and operation", label, "GPM", numbers, {}, samples))
+        hours = {n: f["hours_avg"] for n, f in parsed.sample_flow.items() if f.get("hours_avg") is not None}
+        if hours:
+            rows.append(_spread("Flow and operation", "Operating hours per day", "h", hours, {}, samples))
+        described = "; ".join(f"{tag(n)}: {describe_flow(f)}" for n, f in flows.items())
+        note = f"Flow: {described}."
+        if len(flows) > 1:
+            combined = sum(design_flow_gpm(f) for f in flows.values())
+            note += f" Combined design flow if treated together: {combined:,.0f} GPM."
+        findings.append(note)
+
+    # ── Verdict ───────────────────────────────────────────────────────────────
+    if total_ratio is None or overlap is None:
+        uniformity = "not assessed"
+        verdict = "PFAS uniformity cannot be assessed because fewer than two samples have PFAS results"
+    elif total_ratio >= NONUNIFORM_TOTAL_RATIO or overlap < NONUNIFORM_OVERLAP:
+        uniformity = "non-uniform"
+        verdict = "the samples are not uniform"
+    elif total_ratio <= UNIFORM_TOTAL_RATIO and overlap >= UNIFORM_OVERLAP:
+        uniformity = "uniform"
+        verdict = "PFAS level and composition are uniform"
+    else:
+        uniformity = "moderately variable"
+        verdict = "the samples are moderately variable"
+
+    files = {parsed.sample_source.get(n) for n in samples} - {None}
+    origin = f" from {len(files)} file(s)" if files else ""
+    headline = f"{len(samples)} samples{origin}: {verdict}"
+    if total_ratio is not None and overlap is not None:
+        headline += (
+            f" (total PFAS max/min {total_ratio:.1f}×, composition overlap {overlap * 100:.0f}%)"
+        )
+    headline += "."
+
+    design_notes = [
+        "Screening in this report uses, for each parameter, the highest value across the "
+        "samples, and the maximum where a Min / Avg / Max range is given.",
+    ]
+    if uniformity == "uniform":
+        design_notes.append(
+            "The samples are consistent, so any one of them is representative of the stream."
+        )
+    elif uniformity in ("non-uniform", "moderately variable"):
+        design_notes.append(
+            "The basis of design has to be chosen deliberately. If the samples are one stream "
+            "at different times, size on the worst case and use the average for operating "
+            "cost. If they are separate streams, each needs its own basis of design, or a "
+            "flow-weighted blend if they are combined before treatment."
+        )
+    averaged = [n for n in samples if parsed.sample_basis.get(n) in ("average", "median")]
+    if averaged:
+        design_notes.append(
+            "Only average values are reported for: " + ", ".join(tag(n) for n in averaged)
+            + ". Peak concentrations are not known."
+        )
+
+    return SampleComparison(
+        samples=samples,
+        sources={n: parsed.sample_source.get(n, "") for n in samples},
+        rows=rows,
+        uniformity=uniformity,
+        headline=headline,
+        findings=findings,
+        design_notes=design_notes,
+        labels=labels,
+        legend=legend,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AN-1 — ANALYTICAL FEASIBILITY CHECK  (ultra-low target / drinking water)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1342,7 +1646,12 @@ def _per_sample_status(m1: Module1Result, m2: Module2Result) -> str:
 # MISSING INFO TRACKER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _collect_missing_info(parsed: ParsedData, module3: Module3Result) -> List[str]:
+def _collect_missing_info(
+    parsed: ParsedData,
+    module3: Module3Result,
+    sample_names: List[str],
+    comparison: Optional[SampleComparison] = None,
+) -> List[str]:
     missing: List[str] = []
     if not parsed.has_pfas_data:
         missing.append("PFAS concentration data (Excel table or PDF lab report with quantified results)")
@@ -1350,8 +1659,22 @@ def _collect_missing_info(parsed: ParsedData, module3: Module3Result) -> List[st
         missing.append(p)
     if not parsed.treatment_goals_text.strip():
         missing.append("Treatment objectives: target concentration limits, regulatory driver, target analytes")
-    if "flow_rate" not in parsed.matrix_params:
+    project_flow = bool(parsed.llm_project_context.get("throughput_gpm")) or (
+        "flow_rate" in parsed.matrix_params
+    )
+    with_flow = {n for n, f in parsed.sample_flow.items() if design_flow_gpm(f) is not None}
+    if not project_flow and not with_flow:
         missing.append("Site flow rate / design volume (required for sizing and cost estimation)")
+    elif not project_flow:
+        lacking = [n for n in sample_names if n not in with_flow]
+        if lacking:
+            missing.append("Flow rate for: " + ", ".join(f"'{n}'" for n in lacking))
+    if comparison is not None and comparison.uniformity in ("non-uniform", "moderately variable"):
+        missing.append(
+            f"Whether the {len(comparison.samples)} samples are one stream at different times "
+            "or separate streams, and whether they will be treated together (sets the basis "
+            "of design)"
+        )
     return missing
 
 
@@ -1404,14 +1727,21 @@ def _generate_email_draft(data: dict) -> str:
     if sample_results:
         worst = max(
             sample_results,
-            key=lambda sr: {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
+            key=lambda sr: (
+                {"CRITICAL": 2, "CONDITIONAL": 1, "PROCEED": 0}.get(sr.sample_status, 0),
+                sr.module1.total_conc_mg_L,
+            ),
         )
 
     # PFAS profile lines
     pfas_lines: List[str] = []
     if worst and worst.module1.total_conc_mg_L > 0:
         m1 = worst.module1
-        pfas_lines.append(f"  • Total PFAS (worst-case sample): {format_conc_auto(m1.total_conc_mg_L)}")
+        pfas_lines.append(
+            f"  • Total PFAS (worst-case sample"
+            + (f" '{worst.sample_name}'" if len(sample_results) > 1 else "")
+            + f"): {format_conc_auto(m1.total_conc_mg_L)}"
+        )
         top_str = ", ".join(
             f"{s.name} ({format_pct(s.percentage)})"
             for s in m1.species[:4] if s.detected
@@ -1471,6 +1801,23 @@ PFAS PROFILE SUMMARY
 """
     if variability_flag:
         email += f"\n  • ⚠ {variability_flag.message}\n"
+
+    comparison: Optional[SampleComparison] = data.get("comparison")
+    if comparison is not None:
+        lines = [comparison.headline, *([comparison.legend] if comparison.legend else []),
+                 *comparison.findings, *comparison.design_notes]
+        email += "\nSAMPLE COMPARISON AND BASIS OF DESIGN\n" + "\n".join(f"  • {t}" for t in lines) + "\n"
+
+    flow_lines = [
+        f"  • {name}: {describe_flow(flow)}"
+        + (f", {flow['hours_avg']:g} h/day" if flow.get("hours_avg") is not None else "")
+        for name, flow in (data.get("sample_flow") or {}).items()
+        if describe_flow(flow)
+    ]
+    if data.get("project_flow"):
+        flow_lines.append(f"  • Project: {data['project_flow']}")
+    if flow_lines and comparison is None:
+        email += "\nFLOW\n" + "\n".join(flow_lines) + "\n"
 
     email += f"""
 KEY REACTIVITY FLAGS
@@ -1606,7 +1953,57 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
                     f"(coverage {tof_res.coverage_ratio * 100:.1f}%)"
                 )
 
-            sample_results.append(SampleResult(sample_name, m1, m2, s_status, tof_res))
+            sample_result = SampleResult(sample_name, m1, m2, s_status, tof_res)
+            averages = parsed.sample_avg.get(sample_name)
+            if averages:
+                unknown_max = parsed.sample_max_missing.get(sample_name, [])
+                ratios = ", ".join(
+                    f"{name} {pfas_data[name] / averages[name]:.1f}×"
+                    for name in sorted(averages)
+                    if name not in unknown_max and averages[name] > 0 and pfas_data.get(name)
+                )
+                m1.flags.append(FlagItem(
+                    severity="info",
+                    rule_id="M1-STAT-RANGE",
+                    message=(
+                        "Average and maximum are both reported. This assessment uses the "
+                        f"maximum values. Max/Avg ratios: {ratios or 'n/a'}."
+                    ),
+                    detail="Maximum values drive equipment sizing; averages show day-to-day loading.",
+                ))
+                if unknown_max:
+                    m1.flags.append(FlagItem(
+                        severity="warning",
+                        rule_id="M1-MAX-UNKNOWN",
+                        message=(
+                            f"Maximum concentration not reported for: {', '.join(unknown_max)}. "
+                            "Worst-case assessment uses Average value; actual peak may be higher."
+                        ),
+                        detail=(
+                            "No maximum is given for these analytes in the source data. "
+                            "Confirm peak concentrations with the customer before equipment sizing."
+                        ),
+                    ))
+                sample_result.avg_module1 = run_module1(f"{sample_name} (average)", dict(averages))
+            basis = parsed.sample_basis.get(sample_name)
+            if basis in ("average", "median"):
+                m1.flags.append(FlagItem(
+                    severity="info",
+                    rule_id="M1-AVG-ONLY",
+                    message=(
+                        f"Values are {basis}s; no maximum is reported. "
+                        "Peak concentrations may be higher."
+                    ),
+                    detail="Confirm peak concentrations with the customer before equipment sizing.",
+                ))
+            elif basis == "minimum":
+                m1.flags.append(FlagItem(
+                    severity="warning",
+                    rule_id="M1-MIN-ONLY",
+                    message="Only minimum values are reported, so this assessment understates the load.",
+                    detail="Request average and maximum concentrations from the customer.",
+                ))
+            sample_results.append(sample_result)
             logs.append(f"[M2] Sample '{sample_name}' → {s_status}")
     else:
         # Keyword-only path
@@ -1721,9 +2118,27 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
             logs.append(f"[M1-VAR] Variability ratio: {variability_ratio:.2f}")
 
     # ── Module 3 ──────────────────────────────────────────────────────────────
-    logs.append(f"[M3] {len(parsed.matrix_params)} matrix parameters")
-    module3 = run_module3(parsed.matrix_params)
+    # Each sample is screened on its own water matrix; the overall result is
+    # screened on the highest value of each parameter across the samples.
+    screen, value_sources = screening_matrix(parsed)
+    logs.append(f"[M3] {len(screen)} matrix parameters")
+    module3 = run_module3(screen)
     logs.append(f"[M3] Status: {module3.status_contribution}")
+    per_sample_matrix = sample_matrices(parsed)
+    sample_module3: Dict[str, Module3Result] = {}
+    if len(per_sample_matrix) > 1:
+        module3.value_sources = value_sources
+        for sr in sample_results:
+            if sr.sample_name in per_sample_matrix:
+                sample_module3[sr.sample_name] = run_module3(per_sample_matrix[sr.sample_name])
+        for _name, _own in sample_module3.items():
+            for _param in _own.missing_required_params:
+                _entry = f"{_param} for sample '{_name}'"
+                # Another sample reports this parameter, so the overall screening has
+                # a value, but this sample was not screened for it.
+                if _param not in module3.missing_required_params:
+                    module3.missing_required_params.append(_entry)
+                    module3.status_contribution = "CONDITIONAL"
 
     # ── Throughput / flow-rate flag ───────────────────────────────────────────
     # If the LLM parser extracted a throughput and converted it to GPM, check
@@ -1754,6 +2169,30 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
             ))
             logs.append(f"[PROJ] COMMERCIAL flag raised: throughput {_throughput_gpm:.0f} GPM > 100 GPM threshold")
 
+    for _name, _flow in parsed.sample_flow.items():
+        _design = design_flow_gpm(_flow)
+        if _design is None:
+            continue
+        logs.append(f"[PROJ] Flow '{_name}': {describe_flow(_flow)} (design {_design:.1f} GPM)")
+        if _design > 100:
+            module3.flags.append(FlagItem(
+                severity="commercial",
+                rule_id="PROJ-FLOW",
+                message=(
+                    f"Large-scale application: '{_name}' design flow {_design:.0f} GPM "
+                    f"({describe_flow(_flow)}) exceeds the 100 GPM threshold."
+                ),
+                detail=(
+                    "Projects above 100 GPM require a full commercial and engineering "
+                    "review: skid configuration, pre-treatment sizing, OPEX modelling, "
+                    "and senior applications-engineering sign-off before quoting."
+                ),
+            ))
+
+    comparison = _compare_samples(sample_results, parsed)
+    if comparison is not None:
+        logs.append(f"[COMPARE] {comparison.headline}")
+
     # ── AN-1: analytical feasibility (ultra-low target / drinking water) ─────
     _worst_total = max(
         (sr.module1.total_conc_mg_L for sr in sample_results), default=None
@@ -1769,10 +2208,14 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         sample_results, module3, variability_flag, parsed.has_pfas_data,
         analytical_flag=analytical_flag,
     )
+    if comparison is not None:
+        status_reasons.append(comparison.headline)
     logs.append(f"[Engine] Overall: {overall_status}")
 
     # ── Outputs ───────────────────────────────────────────────────────────────
-    missing_info      = _collect_missing_info(parsed, module3)
+    missing_info      = _collect_missing_info(
+        parsed, module3, [sr.sample_name for sr in sample_results if sr.module1.species], comparison
+    )
     treatment_summary = _build_treatment_summary(sample_results, module3)
     email_draft       = _generate_email_draft({
         "overall_status":   overall_status,
@@ -1784,6 +2227,9 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         "goals_text":       parsed.treatment_goals_text,
         "variability_flag": variability_flag,
         "analytical_flag":  analytical_flag,
+        "comparison":       comparison,
+        "sample_flow":      parsed.sample_flow,
+        "project_flow":     parsed.llm_project_context.get("flow_rate_display", ""),
     })
 
     logs.append("=== Engine complete ===")
@@ -1803,4 +2249,7 @@ def evaluate(parsed: ParsedData) -> EvaluationResult:
         variability_flag=variability_flag,
         tof_results=tof_results,
         analytical_flag=analytical_flag,
+        sample_module3=sample_module3,
+        sample_flow={n: dict(f) for n, f in parsed.sample_flow.items()},
+        comparison=comparison,
     )

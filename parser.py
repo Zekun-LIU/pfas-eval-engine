@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -20,6 +21,8 @@ from file_readers import KIND_DOCUMENT, KIND_PDF, KIND_SPREADSHEET, KIND_UNREADA
 from utils import (
     PFAS_SPECIES_DB,
     PFAS_ALIASES,
+    _ND_TOKENS,
+    convert_flow_to_gpm,
     convert_to_mg_L,
     detect_unit_from_text,
     normalize_pfas_name,
@@ -62,8 +65,32 @@ class ParsedData:
     # Original unit detected in the data source
     detected_unit: str = "ng/L"
 
-    # Water matrix parameters extracted from text (mg/L or native units as noted)
+    # Water matrix parameters that are not tied to one sample, e.g. from the
+    # customer's notes (mg/L or native units as noted). They apply to every sample.
     matrix_params: Dict[str, float] = field(default_factory=dict)
+
+    # Water matrix measured on a specific sample: {sample: {param: value}}.
+    # Where the source gives a range, the value is the maximum (screening basis).
+    sample_matrix: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Min / avg / max as reported, for PFAS species and matrix parameters that
+    # have more than one of them: {sample: {name: {"min"|"avg"|"max": value}}}
+    sample_ranges: Dict[str, Dict[str, Dict[str, float]]] = field(default_factory=dict)
+    # Flow and operating pattern of a sample's stream. Keys, all optional:
+    # min_gpm, avg_gpm, max_gpm, unit, min, avg, max (as reported),
+    # hours_min, hours_avg, hours_max (per day), daily_volume, daily_volume_unit
+    sample_flow: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Average PFAS values of a sample whose pfas_samples entry holds its maxima
+    sample_avg: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # Species of such a sample that have an average but no maximum
+    sample_max_missing: Dict[str, List[str]] = field(default_factory=dict)
+    # What a sample's values are when they are not single measurements:
+    # "average" | "maximum" | "minimum" | "median"
+    sample_basis: Dict[str, str] = field(default_factory=dict)
+    # File each sample was read from
+    sample_source: Dict[str, str] = field(default_factory=dict)
+    # Label spanning the value columns of the table a sample came from
+    # (parser-internal, e.g. "Influent Water" above Min / Avg / Max)
+    stream_hint: str = ""
 
     # Keywords detected (species names found in text without numeric concentration)
     keyword_species: List[str] = field(default_factory=list)
@@ -111,7 +138,25 @@ class ParsedData:
             for sp in nd_list:
                 if sp not in self.nd_species[sample]:
                     self.nd_species[sample].append(sp)
-        self.matrix_params.update(other.matrix_params)
+        for key, value in other.matrix_params.items():
+            self.matrix_params.setdefault(key, value)
+        for mine, theirs in (
+            (self.sample_matrix, other.sample_matrix),
+            (self.sample_ranges, other.sample_ranges),
+            (self.sample_flow, other.sample_flow),
+            (self.sample_avg, other.sample_avg),
+        ):
+            for sample, values in theirs.items():
+                target = mine.setdefault(sample, {})
+                for key, value in values.items():
+                    target.setdefault(key, value)
+        for sample, species in other.sample_max_missing.items():
+            target_list = self.sample_max_missing.setdefault(sample, [])
+            target_list += [sp for sp in species if sp not in target_list]
+        for sample, basis in other.sample_basis.items():
+            self.sample_basis.setdefault(sample, basis)
+        for sample, source in other.sample_source.items():
+            self.sample_source.setdefault(sample, source)
         for sample, bulk in other.aof_tof_data.items():
             if sample not in self.aof_tof_data:
                 self.aof_tof_data[sample] = {}
@@ -132,8 +177,8 @@ class ParsedData:
         self.data_checks += other.data_checks
         self.sample_metadata.update(other.sample_metadata)
         self.llm_parse_notes += other.llm_parse_notes
-        if other.llm_project_context:
-            self.llm_project_context.update(other.llm_project_context)
+        for key, value in other.llm_project_context.items():
+            self.llm_project_context.setdefault(key, value)
         if other.llm_raw_response:
             self.llm_raw_response = other.llm_raw_response
 
@@ -241,19 +286,16 @@ def parse_excel(file_bytes: bytes, filename: str) -> ParsedData:
     result.warnings += best_result.warnings
     result.aof_tof_data = best_result.aof_tof_data
 
-    # ── Extract matrix parameters from all sheets ─────────────────────────────
-    matrix_params = _extract_matrix_from_excel(sheets, logs)
-    if matrix_params:
-        result.matrix_params.update(matrix_params)
-        logs.append(f"[Excel] Matrix params auto-extracted: {list(matrix_params.keys())}")
+    result.stream_hint = best_result.stream_hint
+
+    # ── Water matrix and flow from all sheets ────────────────────────────────
+    _attach_water_data(result, sheets, filename)
+    if result.matrix_params or result.sample_matrix or result.sample_flow:
         if not result.has_pfas_data and not result.nd_species:
             # A water-quality-only workbook is expected when PFAS results
             # arrive in a separate file — not a parse failure.
             result.warnings = [w for w in result.warnings if "PFAS data" not in w]
-            logs.append(
-                f"[Excel] '{filename}': no PFAS results; read as water-quality data "
-                f"({len(matrix_params)} parameter(s))"
-            )
+            logs.append(f"[Excel] '{filename}': no PFAS results; read as water-quality data")
 
     return result
 
@@ -458,6 +500,29 @@ def _parse_transposed_excel_sheet(
     return result
 
 
+def _is_nd_marker(raw: Any) -> bool:
+    """True for a non-detect entry such as '<2', 'ND' or 'not detected'."""
+    text = str(raw).strip().lower() if raw is not None else ""
+    if not text or text in ("nan", "none"):
+        return False
+    if text[0] in "<≤" or text in _ND_TOKENS:
+        return True
+    return bool(re.match(r"n\.?d\.?\b|non[- ]?detect|not detected|below\b|bdl\b", text))
+
+
+def _group_label(df: "pd.DataFrame", row: int) -> str:
+    """The single label spanning a table's value columns, e.g. 'Influent Water'."""
+    labels = {
+        str(df.iloc[row, c]).strip() for c in range(1, len(df.columns))
+    } - {"", "nan", "None"}
+    if len(labels) != 1:
+        return ""
+    label = labels.pop()
+    if parse_numeric_value(label) is not None or ":" in label or len(label) > 60:
+        return ""
+    return label
+
+
 _NOT_A_SAMPLE = re.compile(
     r"^\s*(?:rl|mdl|mrl|dl|lod|loq|pql|sdl|reporting\s+limit|detection\s+limit|"
     r"quantitation\s+limit|limit|cas|cas\s*(?:no|number|#|rn)\.?|method|units?|uom|"
@@ -494,8 +559,10 @@ def _parse_excel_sheet(
             # Chemistry or unit rows can sit between the sample names and the first
             # PFAS row; their values must not be taken for sample names.
             while header_row_idx:
-                above = str(df_raw.iloc[header_row_idx, 0]).strip().lower()
-                if above in ("unit", "units", "uom") or _keyword_match(above):
+                above = str(df_raw.iloc[header_row_idx, 0]).strip()
+                if above.lower() in ("unit", "units", "uom") or _row_kind(above) in (
+                    "matrix", "flow", "hours", "volume"
+                ):
                     header_row_idx -= 1
                 else:
                     break
@@ -590,6 +657,8 @@ def _parse_excel_sheet(
         sample_names = [f"Sample_{i + 1}" for i in range(n_cols - 1)]
 
     logs.append(f"[Excel] Sheet '{sheet_name}': sample columns {sample_names}")
+    if header_row_idx:
+        result.stream_hint = _group_label(df_raw, header_row_idx - 1)
 
     unit_col: Optional[int] = None
     if header_row_idx is not None and header_row_idx >= 0:
@@ -714,20 +783,17 @@ def _parse_excel_sheet(
                     result.warnings.append(
                         f"[Excel] Row {ri + 1}: unit '{unit}' conversion failed for '{val}'"
                     )
-            else:
-                # Check if this is a ND / non-detect marker (not just empty)
-                raw_str = str(raw_val).strip().lower() if raw_val is not None else ""
-                if raw_str and raw_str not in ("nan", "none", ""):
-                    row_had_nd = True
+            elif _is_nd_marker(raw_val):
+                # Non-detect is recorded for this sample only. A blank cell is
+                # missing data, and a units cell is not a result at all.
+                row_had_nd = True
+                if analyte not in nd_data[sample_name]:
+                    nd_data[sample_name].append(analyte)
 
         if row_had_numeric:
             parsed_rows += 1
         elif row_had_nd:
-            # Analyte was analyzed but all results were non-detect
             nd_rows += 1
-            for sample_name in sample_names:
-                if analyte not in nd_data[sample_name]:
-                    nd_data[sample_name].append(analyte)
 
     # Remove empty samples, and columns that describe the result instead of being one
     pfas_data = {k: v for k, v in pfas_data.items() if v and not _NOT_A_SAMPLE.match(k)}
@@ -911,6 +977,10 @@ _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
         "zwevende stoffen",                      # Dutch
         "solidos suspendidos totales",           # Spanish
     ],
+    "sodium": ["sodium", "natrium", "sodio"],
+    "perchlorate": ["perchlorate", "clo4"],
+    "ORP": ["orp", "redox potential", "oxidation reduction potential"],
+    "oil_grease": ["oil & grease", "oil and grease", "o&g", "fog"],
     "alkalinity": [
         "alkalinity", "total alkalinity",
         "alcalinite", "alcalinité", "tac",       # French (titre alcalimétrique)
@@ -1059,7 +1129,7 @@ _MATRIX_EXCEL_KEYWORDS: Dict[str, List[str]] = {
 
 # Parameters that stay in their native unit (not converted to mg/L)
 _MATRIX_NATIVE_UNIT_PARAMS: frozenset = frozenset({
-    "pH", "temperature", "conductivity", "turbidity", "UV254", "UVT254", "flow_rate",
+    "pH", "temperature", "conductivity", "turbidity", "UV254", "UVT254", "flow_rate", "ORP",
 })
 
 # Strings that mark a cell as containing a sum parameter, not a real analyte
@@ -1149,6 +1219,10 @@ def _store_param(
     if as_n:
         unit = _AS_N_UNIT.sub("", unit).strip() or "mg/L"
     mg_l = convert_to_mg_L(val, unit)
+    if mg_l is None:
+        # "mg/L as SO4-2", "µg/L (ppb)": take the magnitude unit it contains
+        base_unit = detect_unit_from_text(unit)
+        mg_l = convert_to_mg_L(val, base_unit) if base_unit else None
     if mg_l is None:
         mg_l = val  # unknown unit — assume already mg/L
     if as_n:
@@ -1804,10 +1878,14 @@ _MATRIX_PATTERNS: Dict[str, List[Tuple[str, str]]] = {
     "temperature": [
         (r"temp(?:erature)?\s*[=:~≈]\s*([0-9.]+)\s*[°]?[Cc]", "°C"),
     ],
-    "flow_rate": [
-        (r"flow\s+rate?\s*[=:~≈]\s*([0-9,.]+)\s*(MGD|gpd|gpm|m3/h|m3/d|L/d|L/h)", "raw"),
-    ],
 }
+
+_FLOW_TEXT = re.compile(
+    r"(?:flow(?:\s*rate)?|throughput|capacity|d[ée]bit|durchfluss)\b[^0-9\n]{0,25}?"
+    r"([0-9][0-9,.]*)\s*"
+    r"(MGD|gpm|gpd|gph|gal/min|gal/day|m3/h|m³/h|m3/hr|m3/d|m³/d|m3/day|L/min|L/s|L/h|lpm)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
@@ -1904,6 +1982,15 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
 
     result.matrix_params = matrix
 
+    flow = _FLOW_TEXT.search(combined)
+    if flow:
+        value = parse_numeric_value(flow.group(1).rstrip(".,"))
+        gpm = convert_flow_to_gpm(value, flow.group(2)) if value is not None else None
+        if gpm is not None:
+            result.llm_project_context["throughput_gpm"] = round(gpm, 2)
+            result.llm_project_context["flow_rate_display"] = f"{value:g} {flow.group(2)}"
+            logs.append(f"[Text] Flow: {value:g} {flow.group(2)} = {gpm:.1f} GPM")
+
     return result
 
 
@@ -1911,26 +1998,23 @@ def parse_text(email_text: str, goals_text: str = "") -> ParsedData:
 # UNIFIED PARSE ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _rename_colliding_samples(
-    result: ParsedData, existing: Dict[str, Any], filename: str
-) -> None:
-    """
-    Within one file type, two uploads can legitimately reuse a sample name
-    (e.g. "Influent" in two separate reports). Suffix the later file's
-    sample with its filename so the two are never silently merged.
-    """
-    for old in [s for s in result.pfas_samples if s in existing]:
-        new = f"{old} ({filename})"
-        result.pfas_samples[new] = result.pfas_samples.pop(old)
-        for per_sample in (result.nd_species, result.aof_tof_data, result.sample_metadata):
-            if old in per_sample:
-                per_sample[new] = per_sample.pop(old)
-        message = (
-            f"Sample '{old}' appears in more than one upload; "
-            f"renamed to '{new}' to keep them separate."
-        )
-        result.warnings.append(f"[Parser] {message}")
-        result.data_checks.append({"level": "warning", "message": message})
+_PER_SAMPLE_FIELDS = (
+    "pfas_samples", "nd_species", "aof_tof_data", "sample_metadata", "sample_matrix",
+    "sample_ranges", "sample_flow", "sample_avg", "sample_max_missing", "sample_basis",
+    "sample_source",
+)
+
+
+def _rename_sample(data: ParsedData, old: str, new: str) -> None:
+    for name in _PER_SAMPLE_FIELDS:
+        per_sample = getattr(data, name)
+        if old in per_sample:
+            per_sample[new] = per_sample.pop(old)
+
+
+def _drop_sample(data: ParsedData, sample: str) -> None:
+    for name in _PER_SAMPLE_FIELDS:
+        getattr(data, name).pop(sample, None)
 
 
 def _table_has_pfas(df: "pd.DataFrame") -> bool:
@@ -1945,7 +2029,7 @@ def _table_has_pfas(df: "pd.DataFrame") -> bool:
 
 
 def parse_table_document(doc: ReadDocument) -> ParsedData:
-    """PFAS results and matrix parameters from the tables of a non-spreadsheet document."""
+    """PFAS results, water matrix and flow from the tables of a document."""
     result = ParsedData()
     logs = result.logs
     for title, df in doc.tables.items():
@@ -1953,15 +2037,385 @@ def parse_table_document(doc: ReadDocument) -> ParsedData:
             continue
         table = _parse_excel_sheet(df, title, doc.name, logs)
         result.warnings += table.warnings
+        result.stream_hint = result.stream_hint or table.stream_hint
+        if table.has_pfas_data and not result.has_pfas_data:
+            result.detected_unit = table.detected_unit
         # One results table split across pages comes through as several tables.
         for sample, data in table.pfas_samples.items():
             result.pfas_samples.setdefault(sample, {}).update(data)
         for sample, species in table.nd_species.items():
-            result.nd_species.setdefault(sample, []).extend(species)
+            mine = result.nd_species.setdefault(sample, [])
+            mine += [sp for sp in species if sp not in mine]
         for sample, bulk in table.aof_tof_data.items():
             result.aof_tof_data.setdefault(sample, {}).update(bulk)
-    result.matrix_params = _extract_matrix_from_excel(doc.tables, logs)
+    _attach_water_data(result, doc.tables, doc.name)
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WATER MATRIX AND FLOW PER SAMPLE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_STAT_COLUMN = re.compile(
+    r"^\s*(min|minimum|avg|average|mean|typical|max|maximum|median)\.?\s*$", re.IGNORECASE
+)
+_GENERIC_VALUE_COLUMN = re.compile(
+    r"^\s*(results?|values?|concentrations?|conc\.?|readings?|data|amount|levels?|"
+    r"measured|measurement|sample_\d+)\s*$",
+    re.IGNORECASE,
+)
+_UNIT_HEADERS = frozenset({
+    "unit", "units", "uom", "unité", "unités", "unite", "unites", "einheit", "eenheid",
+    "unidad", "unità",
+})
+_FLOW_LABEL = re.compile(
+    r"\bflow\s*rate\b|^(?:design|operational|operating|average|peak|max(?:imum)?)?\s*flow\b"
+    r"|\bthroughput\b|\bd[ée]bit\b|\bdurchfluss\b|\bcaudal\b",
+    re.IGNORECASE,
+)
+_HOURS_LABEL = re.compile(
+    r"operational\s+schedule|operating\s+(?:schedule|hours|time)|hours?\s*(?:per|/)\s*day",
+    re.IGNORECASE,
+)
+_VOLUME_LABEL = re.compile(r"daily\s+volume|volume\s+per\s+day", re.IGNORECASE)
+_FLOW_UNIT_IN_TEXT = re.compile(
+    r"mgd|gpm|gpd|gph|gal/min|gal/day|m3/h|m³/h|m3/hr|m3/d|m³/d|m3/day|l/min|l/s|l/h|lpm",
+    re.IGNORECASE,
+)
+
+
+def _stat_kind(column: str) -> str:
+    name = column.strip().lower()
+    if name.startswith("min"):
+        return "min"
+    if name.startswith("max"):
+        return "max"
+    return "avg"
+
+
+@dataclass
+class _ValueTable:
+    """Water chemistry, flow and operation of one table, by value column."""
+    matrix: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    flow: Dict[str, Tuple[float, str]] = field(default_factory=dict)      # column -> (value, unit)
+    hours: Dict[str, float] = field(default_factory=dict)
+    volume: Dict[str, Tuple[float, str]] = field(default_factory=dict)
+    stream_hint: str = ""
+    unreadable_flow: List[str] = field(default_factory=list)
+
+
+def _row_kind(label: str) -> Optional[str]:
+    if not label:
+        return None
+    if normalize_pfas_name(label) in PFAS_SPECIES_DB or _looks_like_pfas(label):
+        return "pfas"
+    low = label.lower()
+    if _FLOW_LABEL.search(label) and "overflow" not in low:
+        return "flow"
+    if _HOURS_LABEL.search(label):
+        return "hours"
+    if _VOLUME_LABEL.search(label):
+        return "volume"
+    if low in _SUM_PARAM_LOWER:
+        return None
+    return "matrix" if _keyword_match(low) else None
+
+
+def _read_value_table(df: "pd.DataFrame", title: str, logs: List[str]) -> Optional[_ValueTable]:
+    """
+    Read a table with parameter names in column A and named value columns
+    (sample names, or Min / Avg / Max). Returns None when the table has no
+    header row to name its columns; the caller then uses the layout detectors.
+    """
+    if df is None or df.empty or len(df.columns) < 2:
+        return None
+    n_rows, n_cols = df.shape
+
+    def cell(r: int, c: int) -> str:
+        text = str(df.iloc[r, c]).strip()
+        return "" if text.lower() in ("nan", "none") else text
+
+    kinds = [_row_kind(cell(r, 0)) for r in range(n_rows)]
+    first = next((r for r, kind in enumerate(kinds) if kind), None)
+    if not first:
+        return None
+
+    header = None
+    for r in range(first - 1, -1, -1):
+        if cell(r, 0).lower() in _UNIT_HEADERS:
+            continue
+        if any(c and parse_numeric_value(c) is None for c in (cell(r, c) for c in range(1, n_cols))):
+            header = r
+            break
+    if header is None:
+        return None
+
+    unit_col = next((c for c in range(1, n_cols) if cell(header, c).lower() in _UNIT_HEADERS), None)
+    value_cols: Dict[int, str] = {}
+    for c in range(1, n_cols):
+        name = cell(header, c)
+        if c == unit_col or not name or _NOT_A_SAMPLE.match(name):
+            continue
+        name = re.sub(r"\s*[\(\[]\s*(?:ng|µg|ug|mg)/[lL].*?[\)\]]", "", name).strip()
+        name = re.sub(r"\s*[\(\[]\s*(?:ppt|ppb|ppm).*?[\)\]]", "", name).strip()
+        if name:
+            value_cols[c] = name
+    if not value_cols:
+        return None
+
+    table = _ValueTable(stream_hint=_group_label(df, header - 1) if header > 0 else "")
+    for r in range(first, n_rows):
+        kind = kinds[r]
+        if kind in (None, "pfas"):
+            continue
+        label = cell(r, 0)
+        unit_text = cell(r, unit_col) if unit_col is not None else ""
+        for c, column in value_cols.items():
+            value = parse_numeric_value(cell(r, c))
+            if value is None:
+                continue
+            where = f"'{title}' r{r + 1} [{column}]"
+            if kind == "matrix":
+                param = _keyword_match(label.lower())
+                unit = "" if param in _MATRIX_NATIVE_UNIT_PARAMS else (
+                    unit_text or _parse_unit_from_cell(label, "mg/L")
+                )
+                stored: Dict[str, float] = {}
+                _store_param(stored, param, value, unit, where, logs, raw_name=label)
+                table.matrix.setdefault(column, {}).setdefault(param, stored[param])
+            elif kind == "flow":
+                found = _FLOW_UNIT_IN_TEXT.search(unit_text) or _FLOW_UNIT_IN_TEXT.search(label)
+                if found:
+                    table.flow.setdefault(column, (value, found.group()))
+                else:
+                    table.unreadable_flow.append(f"{label}: {value:g} {unit_text}".strip())
+            elif kind == "hours":
+                table.hours.setdefault(column, value)
+            elif kind == "volume":
+                table.volume.setdefault(column, (value, unit_text or "gallons"))
+    return table
+
+
+def describe_flow(flow: Dict[str, Any]) -> str:
+    """'avg 25, max 50 gpm' from a sample_flow entry."""
+    unit = flow.get("unit", "gpm")
+    parts = [f"{key} {flow[key]:g}" for key in ("min", "avg", "max") if flow.get(key) is not None]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return f"{parts[0].split(' ', 1)[1]} {unit}"
+    return f"{', '.join(parts)} {unit}"
+
+
+def design_flow_gpm(flow: Optional[Dict[str, Any]]) -> Optional[float]:
+    """The flow a stream is sized on: its maximum, else average, else minimum."""
+    if not flow:
+        return None
+    for key in ("max_gpm", "avg_gpm", "min_gpm"):
+        if flow.get(key) is not None:
+            return float(flow[key])
+    return None
+
+
+def _flow_entry(
+    flow: Dict[str, Tuple[float, str]],
+    hours: Dict[str, float],
+    volume: Dict[str, Tuple[float, str]],
+) -> Dict[str, Any]:
+    """Build a sample_flow entry from {"min"|"avg"|"max": ...} readings."""
+    entry: Dict[str, Any] = {}
+    for kind, (value, unit) in flow.items():
+        gpm = convert_flow_to_gpm(value, unit)
+        if gpm is None:
+            continue
+        entry[kind] = value
+        entry[f"{kind}_gpm"] = round(gpm, 3)
+        entry.setdefault("unit", unit)
+    for kind, value in hours.items():
+        entry[f"hours_{kind}"] = value
+    for value, unit in list(volume.values())[:1]:
+        entry["daily_volume"] = value
+        entry["daily_volume_unit"] = unit
+    return entry
+
+
+def _attach_water_data(result: ParsedData, tables: Dict[str, "pd.DataFrame"], filename: str) -> None:
+    """
+    Read water chemistry and flow from a file's tables and tie them to its
+    samples. Columns named Min / Avg / Max are statistics of one stream, not
+    three samples.
+    """
+    logs = result.logs
+    general: Dict[str, Any] = {}
+    matrix: Dict[str, Dict[str, Any]] = {}
+    flow: Dict[str, Tuple[float, str]] = {}
+    hours: Dict[str, float] = {}
+    volume: Dict[str, Tuple[float, str]] = {}
+    hints = [result.stream_hint]
+
+    for title, df in tables.items():
+        table = _read_value_table(df, str(title), logs)
+        if table is None:
+            if df is not None and not df.empty and len(df.columns) >= 2:
+                for key, value in _extract_matrix_params_from_sheet(df, str(title), logs).items():
+                    general.setdefault(key, value)
+            continue
+        hints.append(table.stream_hint)
+        for column, params in table.matrix.items():
+            target = matrix.setdefault(column, {})
+            for key, value in params.items():
+                target.setdefault(key, value)
+        for column, reading in table.flow.items():
+            flow.setdefault(column, reading)
+        for column, value in table.hours.items():
+            hours.setdefault(column, value)
+        for column, reading in table.volume.items():
+            volume.setdefault(column, reading)
+        for item in table.unreadable_flow:
+            result.data_checks.append({
+                "level": "warning",
+                "message": f"'{filename}': flow value without a recognised unit ({item}); not used.",
+            })
+
+    pfas_names = set(result.pfas_samples) | set(result.nd_species) | set(result.aof_tof_data)
+    columns = pfas_names | set(matrix) | set(flow) | set(hours) | set(volume)
+
+    if columns and all(_STAT_COLUMN.match(c) for c in columns):
+        stream = next((h for h in hints if h), "") or PurePosixPath(filename.split(" / ")[-1]).stem
+        _fold_statistics(result, stream, matrix, flow, hours, volume, filename)
+    else:
+        for column in sorted(set(matrix) | set(flow) | set(hours) | set(volume)):
+            entry = _flow_entry(
+                {"avg": flow[column]} if column in flow else {},
+                {"avg": hours[column]} if column in hours else {},
+                {"avg": volume[column]} if column in volume else {},
+            )
+            named = column in pfas_names or not (
+                _GENERIC_VALUE_COLUMN.match(column) or _STAT_COLUMN.match(column)
+            )
+            if named:
+                if column in matrix:
+                    result.sample_matrix[column] = matrix[column]
+                if entry:
+                    result.sample_flow[column] = entry
+            else:
+                for key, value in matrix.get(column, {}).items():
+                    general.setdefault(key, value)
+                gpm = design_flow_gpm(entry)
+                if gpm is not None:
+                    result.llm_project_context.setdefault("throughput_gpm", round(gpm, 2))
+                    result.llm_project_context.setdefault("flow_rate_display", describe_flow(entry))
+
+    for key, value in general.items():
+        result.matrix_params.setdefault(key, value)
+    if general or matrix:
+        logs.append(
+            f"[Matrix] '{filename}': {len(general)} parameter(s) not tied to a sample, "
+            f"{sum(len(m) for m in result.sample_matrix.values())} tied to samples"
+        )
+
+
+def _fold_statistics(
+    result: ParsedData,
+    stream: str,
+    matrix: Dict[str, Dict[str, Any]],
+    flow: Dict[str, Tuple[float, str]],
+    hours: Dict[str, float],
+    volume: Dict[str, Tuple[float, str]],
+    filename: str,
+) -> None:
+    """Turn Min / Avg / Max columns into one sample named after its stream."""
+    def by_kind(per_column: Dict[str, Any]) -> Dict[str, Any]:
+        folded: Dict[str, Any] = {}
+        for column, value in per_column.items():
+            folded.setdefault(_stat_kind(column), value)
+        return folded
+
+    def merged(per_column: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        folded: Dict[str, Dict[str, Any]] = {"min": {}, "avg": {}, "max": {}}
+        for column, values in per_column.items():
+            for key, value in values.items():
+                folded[_stat_kind(column)].setdefault(key, value)
+        return folded
+
+    def ranges(stats: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+        names = set(stats["min"]) | set(stats["avg"]) | set(stats["max"])
+        out = {
+            name: {kind: stats[kind][name] for kind in ("min", "avg", "max") if name in stats[kind]}
+            for name in names
+        }
+        return {name: r for name, r in out.items() if len(r) > 1}
+
+    pfas = merged(result.pfas_samples)
+    worst = {**pfas["min"], **pfas["avg"], **pfas["max"]}     # maximum wins, then average
+    non_detects = sorted({sp for species in result.nd_species.values() for sp in species} - set(worst))
+    bulk = merged(result.aof_tof_data)
+    bulk_worst = {**bulk["min"], **bulk["avg"], **bulk["max"]}
+
+    result.pfas_samples = {stream: worst} if worst else {}
+    result.nd_species = {stream: non_detects} if non_detects else {}
+    result.aof_tof_data = {stream: bulk_worst} if bulk_worst else {}
+
+    if pfas["max"] and pfas["avg"]:
+        result.sample_avg[stream] = dict(pfas["avg"])
+        missing = sorted(set(pfas["avg"]) - set(pfas["max"]))
+        if missing:
+            result.sample_max_missing[stream] = missing
+    elif pfas["max"]:
+        result.sample_basis[stream] = "maximum"
+    elif pfas["avg"]:
+        result.sample_basis[stream] = "average"
+    elif pfas["min"]:
+        result.sample_basis[stream] = "minimum"
+    only_min = sorted(set(pfas["min"]) - set(pfas["avg"]) - set(pfas["max"]))
+    if only_min and (pfas["avg"] or pfas["max"]):
+        result.data_checks.append({
+            "level": "warning",
+            "message": (
+                f"'{filename}': only a minimum is reported for {', '.join(only_min)}; "
+                "the minimum is used, so these are understated."
+            ),
+        })
+
+    chem = merged(matrix)
+    screening = {**chem["min"], **chem["avg"], **chem["max"]}
+    if screening:
+        result.sample_matrix[stream] = screening
+    all_ranges = {**ranges(pfas), **ranges(chem)}
+    if all_ranges:
+        result.sample_ranges[stream] = all_ranges
+    entry = _flow_entry(by_kind(flow), by_kind(hours), by_kind(volume))
+    if entry:
+        result.sample_flow[stream] = entry
+    result.logs.append(
+        f"[Stream] '{filename}': Min/Avg/Max columns read as one sample '{stream}' "
+        f"({len(worst)} PFAS, {len(screening)} matrix, flow: {describe_flow(entry) or 'none'})"
+    )
+
+
+def sample_matrices(parsed: ParsedData) -> Dict[str, Dict[str, Any]]:
+    """Water matrix of each sample: its own values over those not tied to a sample."""
+    return {name: {**parsed.matrix_params, **own} for name, own in parsed.sample_matrix.items()}
+
+
+def screening_matrix(parsed: ParsedData) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """
+    The matrix the overall screening runs on: for each parameter the highest
+    value across samples. Also returns which sample supplied each value.
+    """
+    worst: Dict[str, Any] = dict(parsed.matrix_params)
+    origin: Dict[str, str] = {}
+    for sample, params in parsed.sample_matrix.items():
+        for key, value in params.items():
+            current = worst.get(key)
+            try:
+                higher = current is None or float(value) > float(current)
+            except (TypeError, ValueError):
+                higher = current is None
+            if higher:
+                worst[key] = value
+                origin[key] = sample
+    return worst, origin
 
 
 def describe_source(doc: ReadDocument, images_read: bool = False) -> Dict[str, str]:
@@ -1984,7 +2438,12 @@ def describe_source(doc: ReadDocument, images_read: bool = False) -> Dict[str, s
 
 
 def _flag_if_empty(result: ParsedData, doc: ReadDocument) -> None:
-    if not (result.pfas_samples or result.nd_species or result.matrix_params):
+    if doc.is_context:
+        return      # an email or spec with no results table is normal
+    if not (
+        result.pfas_samples or result.nd_species or result.matrix_params
+        or result.sample_matrix or result.sample_flow or result.llm_project_context
+    ):
         result.data_checks.append({
             "level": "warning",
             "message": (
@@ -2020,46 +2479,90 @@ def parse_all(
                 ),
             })
 
-    # Spreadsheets and tables in documents
-    table_samples: Dict[str, Any] = {}
-    for doc in documents:
-        if doc.kind == KIND_SPREADSHEET:
-            table_result = parse_excel(doc.data, doc.name)
-        elif doc.kind == KIND_DOCUMENT and doc.tables:
-            table_result = parse_table_document(doc)
-            table_result.has_other = True
-        else:
-            continue
-        _rename_colliding_samples(table_result, table_samples, doc.name)
-        if table_result.has_pfas_data and not table_samples:
-            combined.detected_unit = table_result.detected_unit
-        table_samples.update(table_result.pfas_samples)
-        _flag_if_empty(table_result, doc)
-        combined.merge(table_result)
+    owners: Dict[str, ReadDocument] = {}   # sample -> document that supplied its PFAS data
+    shared_names: set = set()              # names used by several files, now file-specific
 
-    # Parse PDF files
-    pdf_samples: Dict[str, Any] = {}
-    for doc in documents:
-        if doc.kind != KIND_PDF:
-            continue
-        pdf_result = parse_pdf(doc.data, doc.name)
-        _rename_colliding_samples(pdf_result, pdf_samples, doc.name)
-        pdf_samples.update(pdf_result.pfas_samples)
-        _flag_if_empty(pdf_result, doc)
-        combined.data_checks += pdf_result.data_checks
-        # A PDF sample with the same name as an Excel sample is the same report
-        # in two formats — keep the Excel values, don't duplicate.
-        for sample, data in pdf_result.pfas_samples.items():
-            if sample not in combined.pfas_samples:
-                combined.pfas_samples[sample] = data
-        combined.matrix_params.update(
-            {k: v for k, v in pdf_result.matrix_params.items() if k not in combined.matrix_params}
-        )
-        combined.logs += pdf_result.logs
-        combined.warnings += pdf_result.warnings
-        combined.errors += pdf_result.errors
-        if pdf_result.has_pdf:
-            combined.has_pdf = True
+    def stem(doc: ReadDocument) -> str:
+        return PurePosixPath(doc.name.split(" / ")[-1]).stem
+
+    def absorb(result: ParsedData, doc: ReadDocument) -> None:
+        for name in sorted(set(result.pfas_samples) | set(result.nd_species)):
+            owner = owners.get(name)
+            if owner is not None and owner is not doc and (
+                doc.kind == KIND_PDF and owner.kind == KIND_SPREADSHEET
+            ):
+                # The same report as a spreadsheet and as a PDF: keep the spreadsheet.
+                _drop_sample(result, name)
+                combined.data_checks.append({
+                    "level": "warning",
+                    "message": (
+                        f"Sample '{name}' is in both '{owner.name}' and '{doc.name}'. They are "
+                        "treated as the same report in two formats; the spreadsheet values are used."
+                    ),
+                })
+                continue
+            if name in shared_names or (owner is not None and owner is not doc):
+                new = f"{name} ({stem(doc)})"
+                while new in owners:
+                    new += " (2)"
+                if owner is not None:
+                    first = f"{name} ({stem(owner)})"
+                    _rename_sample(combined, name, first)
+                    owners[first] = owners.pop(name)
+                    shared_names.add(name)
+                    message = (
+                        f"Sample '{name}' appears in more than one file. Kept as separate "
+                        f"samples '{first}' and '{new}'."
+                    )
+                else:
+                    message = f"Sample '{name}' appears in more than one file. Kept as '{new}'."
+                _rename_sample(result, name, new)
+                combined.data_checks.append({"level": "warning", "message": message})
+                combined.warnings.append(f"[Parser] {message}")
+                name = new
+            owners[name] = doc
+            result.sample_source.setdefault(name, doc.name)
+
+        for key, value in result.matrix_params.items():
+            current = combined.matrix_params.get(key)
+            try:
+                differs = current is not None and abs(float(current) - float(value)) > 0.01 * max(
+                    abs(float(current)), abs(float(value))
+                )
+            except (TypeError, ValueError):
+                differs = False
+            if differs:
+                higher = max(float(current), float(value))
+                combined.matrix_params[key] = higher
+                combined.data_checks.append({
+                    "level": "warning",
+                    "message": (
+                        f"{key} is reported as {float(current):g} and as {float(value):g} in "
+                        f"files that do not tie it to a sample ('{doc.name}' is one). "
+                        f"The higher value, {higher:g}, is used."
+                    ),
+                })
+        if result.has_pfas_data and not combined.has_pfas_data:
+            combined.detected_unit = result.detected_unit
+        _flag_if_empty(result, doc)
+        combined.merge(result)
+
+    # Spreadsheets first, so a PDF copy of the same report can be recognised
+    for doc in sorted(documents, key=lambda d: d.kind != KIND_SPREADSHEET):
+        if doc.kind == KIND_SPREADSHEET:
+            absorb(parse_excel(doc.data, doc.name), doc)
+        elif doc.kind == KIND_DOCUMENT and doc.tables:
+            result = parse_table_document(doc)
+            result.has_other = True
+            absorb(result, doc)
+        elif doc.kind == KIND_PDF:
+            result = parse_table_document(doc) if doc.tables else ParsedData()
+            if not (result.pfas_samples or result.nd_species or result.sample_matrix
+                    or result.sample_flow or result.matrix_params):
+                # No ruled tables with results: read the page text instead.
+                result = parse_pdf(doc.data, doc.name)
+            result.has_pdf = True
+            absorb(result, doc)
 
     # Prose of lab documents supplies values only. It is kept out of the notes
     # text because engine keyword rules (such as AN-1 on "drinking water") would
@@ -2096,9 +2599,12 @@ def parse_all(
     combined.logs += text_result.logs
     combined.warnings += text_result.warnings
 
+    for key, value in text_result.llm_project_context.items():
+        combined.llm_project_context.setdefault(key, value)
+
     combined.logs.append(
         f"=== Parse complete: {len(combined.pfas_samples)} sample(s), "
-        f"{len(combined.matrix_params)} matrix param(s), "
+        f"{len(screening_matrix(combined)[0])} matrix param(s), "
         f"{len(combined.keyword_species)} keyword(s) ==="
     )
 

@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 from utils import get_pfas_f_fraction, get_pfas_info, is_pfca_only, format_conc_auto
 from engine import EvaluationResult, SampleResult, Module3Result
-from parser import ParsedData
+from parser import ParsedData, design_flow_gpm
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -454,7 +454,13 @@ def generate_test_plans(result: EvaluationResult, parsed: Optional[ParsedData]) 
     for sr in result.samples:
         if not sr.module1.species and sr.module1.total_conc_mg_L == 0:
             continue  # skip empty placeholder samples
-        plans.append(_generate_one_plan(sr, result.module3, project_ctx))
+        # Each sample's plan uses its own water matrix and flow where it has them.
+        m3 = result.sample_module3.get(sr.sample_name, result.module3)
+        ctx = dict(project_ctx)
+        own_flow = design_flow_gpm(result.sample_flow.get(sr.sample_name))
+        if own_flow is not None:
+            ctx["throughput_gpm"] = own_flow
+        plans.append(_generate_one_plan(sr, m3, ctx))
     return plans
 
 
