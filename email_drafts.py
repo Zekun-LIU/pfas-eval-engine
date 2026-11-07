@@ -211,8 +211,9 @@ def _supervised_system(style_guide: str) -> str:
         "- If it lists missing information or open data checks that affect the verdict, say "
         "so plainly rather than sounding more certain than the data allows.\n"
         "- Do not use em dashes.\n"
-        f"- Begin with the line \"Hi {RECIPIENT_TOKEN},\" exactly as written, braces included. "
-        "The application replaces it with the colleague's first name.\n"
+        f"- Begin with the greeting line \"Hi {RECIPIENT_TOKEN},\" (or \"Morning {RECIPIENT_TOKEN},\"), "
+        "with the braces exactly as written. The application replaces the token with the "
+        "colleague's first name.\n"
         "- Return only the email text, with no subject line, no markdown and no preamble."
     )
 
